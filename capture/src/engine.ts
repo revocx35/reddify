@@ -291,6 +291,7 @@ export class Engine {
       maxFrames: Math.round((job.durationMs / 1000) * this.cfg.rate),
       env: this.chrome.env(),
       silenceTimeoutMs: 30_000,
+      tailHoldMs: 1_500,
       log: this.log,
     });
     rec.on('started', () => {

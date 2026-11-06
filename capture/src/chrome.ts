@@ -563,12 +563,15 @@ export class Chrome {
       const position = clock('[data-testid="playback-position"]');
       const duration = clock('[data-testid="playback-duration"]');
       if (position === null && duration === null) return null;
+      // Spotify leaves navigator.mediaSession.playbackState at 'none' while playing: the bar's own button is the truth
+      // ("Pause" while playing).
+      const pp = document.querySelector('[data-testid="control-button-playpause"]');
       const state = navigator.mediaSession ? navigator.mediaSession.playbackState : 'none';
       return {
         position: position === null ? 0 : position,
         duration: duration === null ? 0 : duration,
         ended: false,
-        paused: state !== 'playing',
+        paused: pp ? pp.getAttribute('aria-label') !== 'Pause' : state !== 'playing',
         volume: 1,
         muted: false,
         title,

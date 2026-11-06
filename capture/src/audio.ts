@@ -29,6 +29,13 @@ export interface RecorderOptions {
   threshold?: number;
   /** Give up when nothing audible arrived for this long. */
   silenceTimeoutMs?: number;
+  /**
+   * Hold the last this-many ms before `maxFrames` back from the encoder and, when the recording ends, cut it at the gap
+   * before the next song (see `tailCut`). The recording starts at the first audible frame, a moment after "play", so a
+   * full-length capture would otherwise end with the first fraction of a second of whatever Spotify autoplays next.
+   * 0 = off.
+   */
+  tailHoldMs?: number;
   log?: (msg: string) => void;
 }
 
@@ -66,6 +73,36 @@ export function levels(buf: Buffer): { peakDb: number; rmsDb: number } {
 }
 
 const PRE_ROLL_FRAMES_MS = 25;
+/** |sample| at or below this is digital silence (the gap Chrome leaves between two songs is exact zeros or close). */
+const GAP_LEVEL = 8;
+/** Shortest silence that counts as the gap between two songs. */
+const GAP_MIN_MS = 80;
+
+/**
+ * Where the next song starts in the held-back end of a recording: the start (in frames) of the last run of digital
+ * silence of at least `minRunFrames` that is followed by sound. −1 when there is none (the song simply ran to the end,
+ * or ended in silence with nothing after it), in which case everything is kept.
+ */
+export function tailCut(buf: Buffer, channels: number, minRunFrames: number, level = GAP_LEVEL): number {
+  const fb = frameBytes(channels);
+  const frames = Math.floor(buf.length / fb);
+  let runStart = -1;
+  let cut = -1;
+  for (let f = 0; f < frames; f++) {
+    let quiet = true;
+    for (let c = 0; c < channels && quiet; c++) {
+      const v = buf.readInt16LE((f * channels + c) * 2);
+      if (v > level || v < -level) quiet = false;
+    }
+    if (quiet) {
+      if (runStart < 0) runStart = f;
+    } else {
+      if (runStart >= 0 && f - runStart >= minRunFrames) cut = runStart;
+      runStart = -1;
+    }
+  }
+  return cut;
+}
 const MAX_PENDING_BYTES = 8 * 1024 * 1024;
 
 export class Recorder extends EventEmitter {
@@ -81,6 +118,8 @@ export class Recorder extends EventEmitter {
   private ffmpeg: ChildProcess | null = null;
   private pending: Buffer = Buffer.alloc(0);
   private carry: Buffer = Buffer.alloc(0);
+  /** The held-back end of the recording (tailHoldMs), written by flushTail(). */
+  private tail: Buffer = Buffer.alloc(0);
   private maxRms = -100;
   private maxPeak = -100;
   private silenceTimer: NodeJS.Timeout | null = null;
@@ -141,6 +180,7 @@ export class Recorder extends EventEmitter {
       this.fail('stopped before any audio reached the virtual speaker');
       return;
     }
+    this.flushTail();
     this.stopping = true;
     if (this.silenceTimer) clearTimeout(this.silenceTimer);
     this.silenceTimer = null;
@@ -232,7 +272,7 @@ export class Recorder extends EventEmitter {
   }
 
   private write(chunk: Buffer): void {
-    if (this.state !== 'recording' || !this.ffmpeg?.stdin) return;
+    if (this.state !== 'recording' || !this.ffmpeg?.stdin || this.stopping) return;
     const fb = this.frameSize;
     let buf = this.carry.length ? Buffer.concat([this.carry, chunk]) : chunk;
     this.carry = Buffer.alloc(0);
@@ -240,17 +280,40 @@ export class Recorder extends EventEmitter {
       this.carry = Buffer.from(buf.subarray(buf.length - (buf.length % fb)));
       buf = buf.subarray(0, buf.length - (buf.length % fb));
     }
-    const frames = buf.length / fb;
-    if (this.opts.maxFrames > 0 && this.frames + frames > this.opts.maxFrames) {
-      const keep = Math.max(0, (this.opts.maxFrames - this.frames) * fb);
-      buf = buf.subarray(0, keep);
-      this.frames += keep / fb;
-      this.measure(buf);
-      if (keep > 0) this.ffmpeg.stdin.write(buf);
-      void this.stop();
-      return;
+    const max = this.opts.maxFrames;
+    const accounted = this.frames + this.tail.length / fb;
+    let limit = false;
+    if (max > 0 && accounted + buf.length / fb >= max) {
+      buf = buf.subarray(0, Math.max(0, max - accounted) * fb);
+      limit = true;
     }
-    this.frames += frames;
+    const hold = Math.round(((this.opts.tailHoldMs ?? 0) / 1000) * this.opts.rate);
+    const holdFrom = max > 0 && hold > 0 ? Math.max(0, max - hold) : Infinity;
+    const direct = Math.max(0, Math.min(buf.length / fb, holdFrom - accounted));
+    if (direct > 0) this.out(buf.subarray(0, direct * fb));
+    if (direct * fb < buf.length) this.tail = Buffer.concat([this.tail, buf.subarray(direct * fb)]);
+    if (limit) void this.stop();
+  }
+
+  /** Writes the held-back end, cut at the gap before the next song if there is one. */
+  private flushTail(): void {
+    if (!this.tail.length) return;
+    const tail = this.tail;
+    this.tail = Buffer.alloc(0);
+    if (this.state !== 'recording') return;
+    const cut = tailCut(tail, this.opts.channels, Math.round((GAP_MIN_MS / 1000) * this.opts.rate));
+    if (cut >= 0) {
+      const dropped = tail.length / this.frameSize - cut;
+      this.opts.log?.(`recorder: cut ${Math.round((dropped / this.opts.rate) * 1000)} ms after the gap before the next song`);
+      this.out(tail.subarray(0, cut * this.frameSize));
+    } else {
+      this.out(tail);
+    }
+  }
+
+  private out(buf: Buffer): void {
+    if (!buf.length || !this.ffmpeg?.stdin) return;
+    this.frames += buf.length / this.frameSize;
     this.measure(buf);
     if (!this.ffmpeg.stdin.write(buf)) this.parec?.stdout?.pause();
   }

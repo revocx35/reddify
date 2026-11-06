@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Recorder, firstAudibleFrame, frameBytes, levels, toneWav } from './audio.js';
+import { Recorder, firstAudibleFrame, frameBytes, levels, tailCut, toneWav } from './audio.js';
 
 const RATE = 44100;
 
@@ -68,6 +68,73 @@ describe('Recorder.stop', () => {
     const stopped = await Promise.race([rec.stop().then(() => 'stopped'), new Promise((r) => setTimeout(() => r('hung'), 3000))]);
     expect(stopped).toBe('stopped');
     expect(rec.state).toBe('failed');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+/** Stereo s16 PCM from segments: [frames, amplitude] (amplitude 0 = digital silence). */
+function seg(...parts: [number, number][]): Buffer {
+  const total = parts.reduce((n, [f]) => n + f, 0);
+  const buf = Buffer.alloc(total * 4);
+  let f0 = 0;
+  for (const [frames, amp] of parts) {
+    for (let f = f0; f < f0 + frames; f++) {
+      const v = amp ? Math.round(amp * Math.sin(f / 7)) || amp : 0;
+      buf.writeInt16LE(v, f * 4);
+      buf.writeInt16LE(v, f * 4 + 2);
+    }
+    f0 += frames;
+  }
+  return buf;
+}
+
+describe('tailCut (the gap before the next song)', () => {
+  const MIN = 3528; // 80 ms
+
+  it('cuts at the start of the silence that is followed by the next song', () => {
+    expect(tailCut(seg([20000, 6000], [11000, 0], [13000, 9000]), 2, MIN)).toBe(20000);
+  });
+
+  it('keeps a song that runs to the end, or ends in silence with nothing after it', () => {
+    expect(tailCut(seg([44100, 6000]), 2, MIN)).toBe(-1);
+    expect(tailCut(seg([30000, 6000], [14100, 0]), 2, MIN)).toBe(-1);
+  });
+
+  it('ignores pauses shorter than a song gap (and zero crossings)', () => {
+    expect(tailCut(seg([20000, 6000], [2000, 0], [22100, 6000]), 2, MIN)).toBe(-1);
+  });
+});
+
+describe.runIf(fs.existsSync('/usr/bin/ffmpeg'))('Recorder with a held-back tail (real ffmpeg)', () => {
+  it('ends the file at the gap instead of recording the start of the next song', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rdf-rec-'));
+    // 0.2 s silence (the moment before play), a 2.7 s song, a 0.15 s gap, then the next song: the 3 s cap (the track's
+    // length counted from the first audible frame) would reach into the next song.
+    const pcmFile = path.join(dir, 'in.pcm');
+    fs.writeFileSync(pcmFile, seg([8820, 0], [119070, 6000], [6615, 0], [44100, 9000]));
+    const fake = path.join(dir, 'fake-parec');
+    fs.writeFileSync(fake, `#!/bin/sh\nexec cat ${pcmFile}\nsleep 5\n`, { mode: 0o755 });
+    const file = path.join(dir, 'out.flac');
+    const rec = new Recorder({ file, parec: fake, ffmpeg: '/usr/bin/ffmpeg', pulseServer: 'x', sink: 'x', rate: RATE, channels: 2, maxFrames: 3 * RATE, tailHoldMs: 1500 });
+    rec.start();
+    await rec.waitDone();
+    expect(rec.state).toBe('done');
+    // 25 ms pre-roll + the song, ending at the gap: nothing of the next song.
+    expect(rec.frames).toBe(Math.round(0.025 * RATE) + 119070);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('keeps the full length when nothing follows', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rdf-rec-'));
+    const pcmFile = path.join(dir, 'in.pcm');
+    fs.writeFileSync(pcmFile, seg([8820, 0], [4 * RATE, 6000]));
+    const fake = path.join(dir, 'fake-parec');
+    fs.writeFileSync(fake, `#!/bin/sh\nexec cat ${pcmFile}\n`, { mode: 0o755 });
+    const rec = new Recorder({ file: path.join(dir, 'out.flac'), parec: fake, ffmpeg: '/usr/bin/ffmpeg', pulseServer: 'x', sink: 'x', rate: RATE, channels: 2, maxFrames: 3 * RATE, tailHoldMs: 1500 });
+    rec.start();
+    await rec.waitDone();
+    expect(rec.state).toBe('done');
+    expect(rec.frames).toBe(3 * RATE);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
