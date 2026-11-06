@@ -1,4 +1,4 @@
-import type { AdminSettings, ArtistRef, AudioSource, CoverRef, InstanceMode, MyPlaylist, Role, Track } from '../../../shared/api.js';
+import type { AdminSettings, ArtistRef, AudioSource, Card, CoverRef, InstanceMode, MyPlaylist, Role, Track } from '../../../shared/api.js';
 import type { DB } from './db.js';
 
 export interface UserRow {
@@ -423,6 +423,27 @@ export class Repo {
       .prepare('SELECT t.* FROM likes l JOIN tracks t ON t.id = l.track_id WHERE l.user_id = ? ORDER BY l.created_at DESC')
       .all(userId) as TrackRow[];
     return this.markCached(rows.map((r) => rowToTrack(r, false)));
+  }
+
+  /* ---------------------------------------------------- hidden library items */
+
+  /** Spotify library items the user removed from Your Library in Reddify (newest first). Spotify is not changed. */
+  hiddenLibrary(userId: number): Card[] {
+    const rows = this.db
+      .prepare('SELECT kind, item_id, name, subtitle, image FROM library_hidden WHERE user_id = ? ORDER BY created_at DESC')
+      .all(userId) as { kind: Card['kind']; item_id: string; name: string; subtitle: string; image: string | null }[];
+    return rows.map((r) => ({ kind: r.kind, id: r.item_id, name: r.name, subtitle: r.subtitle, image: r.image }));
+  }
+
+  hideLibraryItem(userId: number, c: Card): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO library_hidden (user_id, kind, item_id, name, subtitle, image, created_at) VALUES (?,?,?,?,?,?,?)')
+      .run(userId, c.kind, c.id, c.name.slice(0, 300), c.subtitle.slice(0, 300), c.image, Date.now());
+  }
+
+  /** Returns false when the item was not hidden. */
+  unhideLibraryItem(userId: number, kind: string, id: string): boolean {
+    return this.db.prepare('DELETE FROM library_hidden WHERE user_id = ? AND kind = ? AND item_id = ?').run(userId, kind, id).changes > 0;
   }
 
   /* -------------------------------------------------------------- playlists */

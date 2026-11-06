@@ -105,6 +105,8 @@ export const api = {
 
   // library
   library: () => get<LibraryResponse>('/api/library'),
+  hideLibraryItem: (kind: string, id: string) => request('PUT', `/api/library/hidden/${enc(kind)}/${enc(id)}`),
+  unhideLibraryItem: (kind: string, id: string) => request('DELETE', `/api/library/hidden/${enc(kind)}/${enc(id)}`),
   liked: () => get<Track[]>('/api/library/liked'),
   likedIds: () => get<string[]>('/api/library/liked/ids'),
   like: (id: string, on: boolean) => request(on ? 'PUT' : 'DELETE', `/api/library/liked/${enc(id)}`),

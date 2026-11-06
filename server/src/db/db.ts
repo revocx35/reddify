@@ -111,6 +111,20 @@ const MIGRATIONS: string[] = [
   `,
   // 3: which connection delivered a library file ('youtube' | 'spotify'), for the admin's per-source counts.
   `ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'youtube';`,
+  // 4: Spotify library items (playlists, albums, artists) a user removed from Your Library in Reddify only. The card is
+  // kept so the item can be listed and restored while Spotify is unreachable. Nothing is changed on Spotify.
+  `
+  CREATE TABLE library_hidden (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('playlist','album','artist')),
+    item_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    subtitle TEXT NOT NULL DEFAULT '',
+    image TEXT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, kind, item_id)
+  ) WITHOUT ROWID;
+  `,
 ];
 
 export function openDb(dataDir: string): DB {

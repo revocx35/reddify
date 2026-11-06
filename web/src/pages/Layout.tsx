@@ -1,72 +1,117 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import type { Card, LibraryResponse } from '../../../shared/api';
-import { api } from '../api/client';
+import type { Card } from '../../../shared/api';
 import { Icon, Logo } from '../components/Icon';
 import { toast, Toasts } from '../components/toast';
 import { Artists, Img, LikeButton, PlaylistCover, fmtTime } from '../components/ui';
 import { castSupported } from '../player/cast';
 import { likes } from '../player/likes';
+import { library, useLibrary } from '../player/library';
 import { myPlaylists, useMyPlaylists } from '../player/playlists';
 import { player, usePlayer } from '../player/player';
 import { useAuth } from '../state';
 
+function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button className="icon-btn lib-remove" aria-label={label} title={label} onClick={onClick}>
+      <Icon name="close" size={18} />
+    </button>
+  );
+}
+
 function SideLibrary() {
-  const [lib, setLib] = useState<LibraryResponse | null>(null);
+  const { data: lib, editing } = useLibrary();
   const mine = useMyPlaylists();
   const navigate = useNavigate();
   useEffect(() => {
-    api.library().then(setLib).catch(() => undefined);
+    void library.refresh();
     void myPlaylists.refresh();
   }, []);
-  const items: { to: string; name: string; sub: string; icon: string; img?: string | null; round?: boolean }[] = [
+  const items: { to: string; name: string; sub: string; icon: string; img?: string | null; round?: boolean; card?: Card }[] = [
     { to: '/collection/liked', name: 'Liked Songs', sub: `Playlist • ${lib?.liked ?? 0} songs`, icon: 'heartFill' },
     { to: '/collection/downloads', name: 'Library', sub: `Downloaded • ${lib?.downloaded ?? 0} songs`, icon: 'downloaded' },
     { to: '/collection/recent', name: 'Recently played', sub: 'Your history', icon: 'clock' },
   ];
-  const sp = (lib?.playlists ?? []).map((c: Card) => ({ to: `/${c.kind}/${c.id}`, name: c.name, sub: c.subtitle, icon: 'music', img: c.image, round: c.kind === 'artist' }));
+  const sp = (lib?.playlists ?? []).map((c: Card) => ({ to: `/${c.kind}/${c.id}`, name: c.name, sub: c.subtitle, icon: 'music', img: c.image, round: c.kind === 'artist', card: c }));
   return (
-    <div className="side-panel side-library">
+    <div className={`side-panel side-library${editing ? ' editing' : ''}`}>
       <div className="side-lib-head">
         <NavLink to="/collection" className="side-link">
           <Icon name="library" /> <span>Your Library</span>
         </NavLink>
-        <button
-          className="icon-btn side-create"
-          aria-label="Create playlist"
-          title="Create playlist"
-          onClick={() => void myPlaylists.create().then((p) => p && (navigate(`/my/${p.id}`), toast(`Created ${p.name}`)))}
-        >
-          <Icon name="plus" size={20} />
-        </button>
+        <span className="side-lib-actions">
+          <button
+            className={`icon-btn side-create${editing ? ' on' : ''}`}
+            aria-label={editing ? 'Done editing Your Library' : 'Edit Your Library'}
+            aria-pressed={editing}
+            title={editing ? 'Done' : 'Edit (remove items)'}
+            onClick={() => library.setEditing(!editing)}
+          >
+            <Icon name={editing ? 'check' : 'edit'} size={20} />
+          </button>
+          <button
+            className="icon-btn side-create"
+            aria-label="Create playlist"
+            title="Create playlist"
+            onClick={() => void myPlaylists.create().then((p) => p && (navigate(`/my/${p.id}`), toast(`Created ${p.name}`)))}
+          >
+            <Icon name="plus" size={20} />
+          </button>
+        </span>
       </div>
+      {editing ? <p className="lib-edit-hint">Removing a Spotify item only hides it here; Spotify keeps it.</p> : null}
       <div className="side-lib-list">
         {mine.map((p) => (
-          <NavLink key={`my${p.id}`} to={`/my/${p.id}`} className="lib-item">
-            <PlaylistCover covers={p.covers} className="lib-art" />
-            <span className="lib-text">
-              <span className="lib-name">{p.name}</span>
-              <span className="lib-sub">
-                Playlist • {p.count} {p.count === 1 ? 'song' : 'songs'}
+          <div key={`my${p.id}`} className="lib-row">
+            <NavLink to={`/my/${p.id}`} className="lib-item">
+              <PlaylistCover covers={p.covers} className="lib-art" />
+              <span className="lib-text">
+                <span className="lib-name">{p.name}</span>
+                <span className="lib-sub">
+                  Playlist • {p.count} {p.count === 1 ? 'song' : 'songs'}
+                </span>
               </span>
-            </span>
-          </NavLink>
+            </NavLink>
+            {editing ? <RemoveButton label={`Delete ${p.name}`} onClick={() => void library.deleteMine(p)} /> : null}
+          </div>
         ))}
         {[...items, ...sp].map((i) => (
-          <NavLink key={i.to} to={i.to} className="lib-item">
-            {i.img !== undefined ? (
-              <Img src={i.img} alt="" round={i.round} className="lib-art" />
-            ) : (
-              <span className={`lib-art lib-art-icon ${i.icon}`}>
-                <Icon name={i.icon} size={20} />
+          <div key={i.to} className="lib-row">
+            <NavLink to={i.to} className="lib-item">
+              {i.img !== undefined ? (
+                <Img src={i.img} alt="" round={i.round} className="lib-art" />
+              ) : (
+                <span className={`lib-art lib-art-icon ${i.icon}`}>
+                  <Icon name={i.icon} size={20} />
+                </span>
+              )}
+              <span className="lib-text">
+                <span className="lib-name">{i.name}</span>
+                <span className="lib-sub">{i.sub}</span>
               </span>
-            )}
-            <span className="lib-text">
-              <span className="lib-name">{i.name}</span>
-              <span className="lib-sub">{i.sub}</span>
-            </span>
-          </NavLink>
+            </NavLink>
+            {editing && i.card ? <RemoveButton label={`Remove ${i.name} from Your Library`} onClick={() => void library.hide(i.card!)} /> : null}
+          </div>
         ))}
+        {editing && lib?.hidden.length ? (
+          <>
+            <div className="lib-hidden-title">Removed ({lib.hidden.length})</div>
+            {lib.hidden.map((c) => (
+              <div key={`h${c.kind}${c.id}`} className="lib-row lib-hidden">
+                <span className="lib-item">
+                  <Img src={c.image} alt="" round={c.kind === 'artist'} className="lib-art" />
+                  <span className="lib-text">
+                    <span className="lib-name">{c.name}</span>
+                    <span className="lib-sub">{c.subtitle}</span>
+                  </span>
+                </span>
+                <button className="btn btn-outline small" onClick={() => void library.restore(c)}>
+                  Restore
+                </button>
+              </div>
+            ))}
+          </>
+        ) : null}
       </div>
     </div>
   );

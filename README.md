@@ -8,6 +8,7 @@ in a Chrome with Widevine), or either one with the other as fallback.
 
 - Web app (desktop + phone), Android app (background playback, offline downloads), Chromecast from both.
 - Your own playlists (create, edit, reorder, copy a Spotify playlist), private per user and playable offline.
+- Edit Your Library: remove playlists, albums and artists from Reddify (your Spotify account keeps them; restorable).
 - Multi-user: everyone can have their own Spotify login (own Chromium), or the admin shares one browser.
 - Audio from Spotify's own catalogue (exact, no wrong match) or YouTube Music (fast), per admin setting with fallback.
 - Sign-in with authentik (OIDC) and/or local accounts with 2FA.

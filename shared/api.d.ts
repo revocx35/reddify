@@ -152,8 +152,11 @@ export interface CastResponse {
 export interface LibraryResponse {
   liked: number;
   downloaded: number;
-  /** The Spotify account's own playlists (empty when the browser is not logged in). Read-only. */
+  /** The Spotify account's own playlists, albums and artists (empty when the browser is not logged in), minus the
+   * ones the user removed in Reddify. Read-only on Spotify. */
   playlists: Card[];
+  /** Spotify library items removed from Your Library in Reddify only (Spotify keeps them); can be restored. */
+  hidden: Card[];
   /** The user's own Reddify playlists (editable; stored on the Reddify server, work offline). */
   mine: MyPlaylist[];
 }

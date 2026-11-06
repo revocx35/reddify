@@ -19,6 +19,7 @@ import {
   useLoad,
 } from '../components/ui';
 import { player, usePlayer } from '../player/player';
+import { library, useLibrary } from '../player/library';
 import { myPlaylists, useMyPlaylists } from '../player/playlists';
 import { useAuth } from '../state';
 
@@ -406,18 +407,35 @@ export function PlaylistPage() {
 /* ----------------------------------------------------------------------- library */
 
 export function CollectionPage() {
-  const { data } = useLoad(() => api.library(), []);
+  const { data, editing } = useLibrary();
   const mine = useMyPlaylists();
   const navigate = useNavigate();
-  useEffect(() => void myPlaylists.refresh(), []);
+  useEffect(() => {
+    void library.refresh();
+    void myPlaylists.refresh();
+  }, []);
+  // Leave edit mode when the page is left, so the sidebar does not stay in it unnoticed.
+  useEffect(() => () => library.setEditing(false), []);
+  const remove = (label: string, onClick: () => void) =>
+    editing ? (
+      <button className="card-remove" aria-label={label} title={label} onClick={(e) => (e.preventDefault(), e.stopPropagation(), onClick())}>
+        <Icon name="close" size={16} />
+      </button>
+    ) : null;
   return (
-    <div className="page">
+    <div className={`page${editing ? ' lib-editing' : ''}`}>
       <div className="page-title-row">
         <h1 className="page-title">Your Library</h1>
-        <button className="btn btn-outline" onClick={() => void myPlaylists.create().then((p) => p && navigate(`/my/${p.id}`))}>
-          <Icon name="plus" size={18} /> Create playlist
-        </button>
+        <div className="page-title-actions">
+          <button className={`btn ${editing ? 'btn-accent' : 'btn-outline'}`} aria-pressed={editing} onClick={() => library.setEditing(!editing)}>
+            <Icon name={editing ? 'check' : 'edit'} size={18} /> {editing ? 'Done' : 'Edit'}
+          </button>
+          <button className="btn btn-outline" onClick={() => void myPlaylists.create().then((p) => p && navigate(`/my/${p.id}`))}>
+            <Icon name="plus" size={18} /> Create playlist
+          </button>
+        </div>
       </div>
+      {editing ? <p className="muted">Tap ✕ to remove. Spotify playlists, albums and artists are only removed from Reddify; your Spotify account keeps them.</p> : null}
       <div className="grid">
         <Link to="/collection/liked" className="card liked-card">
           <div className="liked-art">
@@ -451,6 +469,7 @@ export function CollectionPage() {
           <Link key={`my${p.id}`} to={`/my/${p.id}`} className="card">
             <div className="card-art">
               <PlaylistCover covers={p.covers} alt={p.name} />
+              {remove(`Delete ${p.name}`, () => void library.deleteMine(p))}
             </div>
             <div className="card-title" title={p.name}>
               {p.name}
@@ -461,9 +480,32 @@ export function CollectionPage() {
           </Link>
         ))}
         {(data?.playlists ?? []).map((c) => (
-          <CardTile key={c.id} c={c} />
+          <div key={`${c.kind}${c.id}`} className="card-wrap">
+            <CardTile c={c} />
+            {remove(`Remove ${c.name} from Your Library`, () => void library.hide(c))}
+          </div>
         ))}
       </div>
+      {editing && data?.hidden.length ? (
+        <>
+          <h2 className="section-title">Removed from Your Library</h2>
+          <div className="grid">
+            {data.hidden.map((c) => (
+              <div key={`h${c.kind}${c.id}`} className="card card-hidden">
+                <div className="card-art">
+                  <Img src={c.image} alt={c.name} round={c.kind === 'artist'} />
+                </div>
+                <div className="card-title" title={c.name}>
+                  {c.name}
+                </div>
+                <button className="btn btn-outline small" onClick={() => void library.restore(c)}>
+                  Restore
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

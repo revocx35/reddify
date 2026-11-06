@@ -96,6 +96,15 @@ id), work offline like Liked Songs (tracks keep their metadata in `tracks`), and
 writing Spotify playlists would need calls the web player's learned queries do not cover. A track appears once per
 playlist; positions are dense (0…n-1). Limits: 1000 playlists per user, 10 000 songs per playlist.
 
+**Editing Your Library** (`api/catalog.ts`, web `player/library.ts`, Android `LibraryScreen`). An Edit button (sidebar
+pencil and the library page on the web, pencil in the Android library header) shows a ✕ on removable items. Own
+playlists are deleted (after a confirm; they only exist in Reddify). Spotify playlists, albums and artists are only
+**hidden in Reddify**: `PUT /api/library/hidden/:kind/:id` stores the card in `library_hidden` (per user) and
+`/api/library` filters it out; nothing is sent to Spotify, the account keeps the item. The card is taken from the
+account's own library read (never from the client), so only items really in the library can be hidden. Removed items
+are listed under "Removed" in edit mode (also when Spotify is down) and `DELETE /api/library/hidden/:kind/:id`
+restores them. The built-in entries (Liked Songs, Library, Recently played, Spotify Liked Songs) are not removable.
+
 **Casting.** Web: Google Cast sender SDK (Chrome only, loaded from gstatic). Android: Cast framework, "mirroring"
 (local ExoPlayer runs muted, track changes / play / pause / seek are repeated on the Chromecast). Both use
 `POST /api/tracks/:id/cast` → `https://<origin>/cast/<trackId>.<exp>.<uid>.<hmac>`: a 12-hour capability for one
@@ -189,7 +198,8 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
 
 `users`, `sessions`, `settings` (instance mode, `audio_source`), `ops` (learned queries), `tracks` (metadata), `files` (library:
 ready/failed, path, size, mime, `source` = youtube|spotify, match), `plays`, `likes`, `playlists` + `playlist_tracks` (own playlists,
-migration 2), `audit` (180 days), `tracks_fts` (contentless FTS5 for offline search). Migrations append-only.
+migration 2), `library_hidden` (Spotify items removed from Your Library in Reddify only, migration 4), `audit` (180 days),
+`tracks_fts` (contentless FTS5 for offline search). Migrations append-only.
 
 ## 7. Deployment
 

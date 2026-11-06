@@ -16,14 +16,14 @@ authentik. Read [ARCHITECTURE.md](ARCHITECTURE.md) first (design, data flow, thr
 | `server/src/http/server.ts` | Fastify, auth resolution, CSRF/origin checks, headers, static web |
 | `server/src/api/` | routes: auth, catalog, playback (+ cast), playlists (the users' own, private), spotify (+ VNC bridge), admin |
 | `server/src/__fixtures__/` | real pathfinder answers (2026-11-06) the parser tests pin |
-| `web/src/` | React UI: `pages/Layout.tsx` (sidebar, player bar, queue, mobile nav, now playing), `pages/Browse.tsx`, `pages/MyPlaylist.tsx` (own playlists), `pages/Settings.tsx`, `player/player.ts` (queue, autoplay, prefetch, Media Session), `player/cast.ts`, `player/playlists.ts` + `components/toast.tsx` |
+| `web/src/` | React UI: `pages/Layout.tsx` (sidebar, player bar, queue, mobile nav, now playing), `pages/Browse.tsx`, `pages/MyPlaylist.tsx` (own playlists), `pages/Settings.tsx`, `player/player.ts` (queue, autoplay, prefetch, Media Session), `player/cast.ts`, `player/playlists.ts`, `player/library.ts` (Your Library + edit mode) + `components/toast.tsx` |
 | `chromium/` | Chromium image + Go manager (shared design with tiktok_logger/insta_logger), `policies.json` = Spotify allowlist |
 | `scripts/setup.sh` | writes `.env`; `scripts/gen-android-icons.py` regenerates the Android client's icons from `web/src/components/Icon.tsx` (expects `../reddify_android`) |
 
 ## Commands
 
 ```bash
-cd server && npm ci && npm test && npx tsc --noEmit          # 37 tests (vitest)
+cd server && npm ci && npm test && npx tsc --noEmit          # 49 tests (vitest)
 cd web && npm ci && npx tsc --noEmit && npm run build
 cd chromium/manager && go test ./...
 docker compose build && docker compose up -d                   # after scripts/setup.sh
@@ -70,5 +70,6 @@ in this repo.
 - The Android client sends its own `rdf_` token as `Authorization`; with authentik it moves to `X-App-Authorization` and NPM swaps it back, so the server accepts `rdf_` tokens on both headers.
 - "Continue with Google" in the Spotify login hops through Google's **country domain** (`accounts.google.com.tr`, …) and `accounts.youtube.com` to set its cookies. Chromium's URL allowlist has no TLD wildcards, so each one is listed in `chromium/policies.json`; if a user from another country gets "blocked by administrator", add their `accounts.google.<tld>`.
 - Own playlists live in Reddify's DB (`playlists`, `playlist_tracks`), not on Spotify: Spotify's playlist writes are not part of what the web player's pathfinder queries offer, and Reddify never mints its own Spotify calls. A Spotify playlist can be copied ("Save as my playlist"). Every playlist route checks the owner and answers 404 otherwise.
+- Removing a Spotify item from Your Library only hides it in Reddify (`library_hidden`). Never turn this into a Spotify write (the owner explicitly wants Spotify left alone). The hide route looks the card up in the account's library, so it needs the Spotify browser logged in; restore does not.
 - Shelves (`.shelf-row`) give each card a fixed share of the row from a container-query column count (2…12). Never `minmax(…, 1fr)` there: a shelf with two cards then blows them up to half of an ultrawide screen.
 - authentik users' display name is their authentik **username** (`preferred_username`), re-synced at every sign-in; authentik's `name` is often a placeholder ("authentik Default Admin").

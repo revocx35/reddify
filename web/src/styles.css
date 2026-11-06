@@ -2370,3 +2370,104 @@ input[type='radio'] {
     right: 8px;
   }
 }
+
+/* ------------------------------------------------------------- library edit mode */
+
+.side-lib-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.side-create.on {
+  color: var(--accent);
+}
+
+.lib-edit-hint {
+  color: var(--sub);
+  font-size: 12px;
+  padding: 0 16px 8px;
+}
+
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lib-row .lib-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.lib-remove {
+  flex: none;
+  color: var(--text);
+  background: var(--elev-2);
+}
+
+.lib-remove:hover {
+  color: #fff;
+  background: var(--accent);
+}
+
+.lib-hidden-title {
+  color: var(--sub);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 12px 8px 4px;
+  border-top: 1px solid var(--elev-2);
+  margin-top: 8px;
+}
+
+.lib-hidden .lib-item {
+  opacity: 0.55;
+}
+
+.lib-hidden .lib-item:hover {
+  background: none;
+}
+
+.page-title-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.card-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.75);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.card-wrap > .card-remove {
+  top: 18px;
+  right: 18px;
+}
+
+.card-remove:hover {
+  background: var(--accent);
+}
+
+.card-hidden {
+  cursor: default;
+}
+
+.card-hidden .card-art {
+  opacity: 0.55;
+}

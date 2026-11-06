@@ -2,11 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { LibraryResponse, Track, TrackPage } from '../../../shared/api.js';
 import { type AppContext, instanceFor } from '../context.js';
+import { AppError } from '../errors.js';
 import { requireUser } from '../http/server.js';
 import { isOffline } from '../spotify/catalog.js';
 import { ID_RE } from '../spotify/parse.js';
 
 export const IdParam = z.object({ id: z.string().regex(ID_RE) });
+const HiddenParam = z.object({ kind: z.enum(['playlist', 'album', 'artist']), id: z.string().regex(ID_RE) });
 const Q = z.string().trim().min(1).max(200);
 const Offset = z.coerce.number().int().min(0).max(10_000).default(0);
 
@@ -86,7 +88,30 @@ export function registerCatalogRoutes(app: FastifyInstance, ctx: AppContext): vo
     let playlists: LibraryResponse['playlists'] = [];
     const st = await s.loggedIn().catch(() => ({ loggedIn: false }));
     if (st.loggedIn) playlists = await ctx.catalog.libraryPlaylists(s, inst).catch(() => []);
-    return { liked: ctx.repo.likedIds(a.user.id).length, downloaded: ctx.repo.storage().tracks, playlists, mine: ctx.repo.playlists(a.user.id) };
+    const hidden = ctx.repo.hiddenLibrary(a.user.id);
+    const gone = new Set(hidden.map((c) => `${c.kind}:${c.id}`));
+    playlists = playlists.filter((c) => !gone.has(`${c.kind}:${c.id}`));
+    return { liked: ctx.repo.likedIds(a.user.id).length, downloaded: ctx.repo.storage().tracks, playlists, hidden, mine: ctx.repo.playlists(a.user.id) };
+  });
+
+  // Remove a Spotify playlist/album/artist from Your Library in Reddify only. Nothing is sent to Spotify. The card is
+  // taken from the account's library (never from the client), so only items really in the library can be hidden.
+  app.put('/api/library/hidden/:kind/:id', async (req) => {
+    const a = requireUser(req);
+    const { kind, id } = HiddenParam.parse(req.params);
+    const { inst, s } = session(a.user.id);
+    const items = await ctx.catalog.libraryPlaylists(s, inst);
+    const card = items.find((c) => c.kind === kind && c.id === id);
+    if (!card) throw new AppError(404, 'not_found', 'That item is not in your Spotify library.');
+    ctx.repo.hideLibraryItem(a.user.id, card);
+    return { ok: true };
+  });
+
+  app.delete('/api/library/hidden/:kind/:id', async (req) => {
+    const a = requireUser(req);
+    const { kind, id } = HiddenParam.parse(req.params);
+    if (!ctx.repo.unhideLibraryItem(a.user.id, kind, id)) throw new AppError(404, 'not_found', 'Not removed.');
+    return { ok: true };
   });
 
   app.get('/api/library/liked', async (req): Promise<Track[]> => ctx.repo.likedTracks(requireUser(req).user.id));

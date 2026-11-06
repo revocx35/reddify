@@ -29,9 +29,12 @@ export class FakeSpotify {
   offline = false;
   calls: { name: string; vars: Record<string, unknown> }[] = [];
   loggedInValue = false;
+  /** Inline answers for operations without a captured fixture (e.g. `libraryV3`). */
+  answers: Record<string, unknown> = {};
   async query(name: string, vars: Record<string, unknown>): Promise<unknown> {
     this.calls.push({ name, vars });
     if (this.offline) throw new AppError(503, 'unavailable', 'Spotify is down (test)');
+    if (name in this.answers) return this.answers[name];
     const map: Record<string, string> = {
       home: 'home',
       searchDesktop: 'searchDesktop',
