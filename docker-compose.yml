@@ -1,0 +1,145 @@
+# Reddify — docker compose stack.
+#   caddy    : TLS termination (or plain HTTP behind your own proxy), the only service with published ports
+#   app      : Node server + web UI + library (yt-dlp / ytmusicapi); reaches YouTube, Spotify's image CDN and authentik
+#   chromium : Spotify's web player in a sandboxed, policy-locked Chromium, one browser per user (or one shared)
+#
+# First run:  scripts/setup.sh   (creates .env)   then   docker compose up -d --build
+
+name: ${COMPOSE_PROJECT_NAME:-reddify}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    build:
+      context: ./caddy
+    image: ${REDDIFY_IMAGE_PREFIX:-reddify}-caddy:${REDDIFY_TAG:-local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    # Caddyfile = HTTPS (Caddy's internal CA / Let's Encrypt); Caddyfile.http = plain HTTP behind your own TLS proxy.
+    command: ["caddy", "run", "--config", "/etc/caddy/${CADDY_CONFIG:-Caddyfile}", "--adapter", "caddyfile"]
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?run scripts/setup.sh first}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 16777216
+          mode: 1023
+    networks: [public, edge]
+    depends_on:
+      app:
+        condition: service_healthy
+    mem_limit: 256m
+    pids_limit: 128
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${REDDIFY_IMAGE_PREFIX:-reddify}-app:${REDDIFY_TAG:-local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    env_file:
+      - ${REDDIFY_ENV_FILE:-.env}
+    environment:
+      DATA_DIR: /data
+      PORT: "8080"
+      HOST: 0.0.0.0
+      CHROMIUM_URL: http://chromium:9223
+      # 1 = only the bundled Caddy; 2 = Caddy + your own reverse proxy in front (HTTP mode).
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+    volumes:
+      - app_data:/data
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 268435456
+          mode: 1023
+    networks: [edge, backend, egress]
+    depends_on:
+      chromium:
+        condition: service_healthy
+    mem_limit: ${APP_MEM_LIMIT:-1g}
+    pids_limit: 512
+
+  chromium:
+    build:
+      context: ./chromium
+    image: ${REDDIFY_IMAGE_PREFIX:-reddify}-chromium:${REDDIFY_TAG:-local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    # The manager (root) starts every user's browser under that user's own unix user and stops it again.
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default profile + the syscalls Chromium's namespace sandbox needs (sandbox stays ON).
+      - seccomp=./chromium/seccomp-chromium.json
+    logging: *logging
+    environment:
+      CONTROL_SECRET: ${CONTROL_SECRET:?run scripts/setup.sh first}
+      MAX_INSTANCES: ${MAX_USERS:-10}
+      SCREEN: ${SCREEN:-1280x800x24}
+      TZ: ${TZ:-UTC}
+      BACKEND_PEER: app
+      LP_NUM_THREADS: ${LP_NUM_THREADS:-2}
+    volumes:
+      - chromium_profile:/data
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 536870912
+          mode: 1023
+      - type: tmpfs
+        target: /home/chrome
+        tmpfs:
+          size: 536870912
+          mode: 457
+      - type: tmpfs
+        target: /run/rdf
+        tmpfs:
+          size: 8388608
+          mode: 457
+    shm_size: ${CHROMIUM_SHM:-1gb}
+    networks: [backend, egress]
+    # Each running browser takes roughly 400-800 MB; idle ones are stopped (BROWSER_IDLE_MINUTES).
+    mem_limit: ${CHROMIUM_MEM_LIMIT:-3g}
+    pids_limit: 4096
+    stop_grace_period: 20s
+
+networks:
+  public: {}
+  # caddy <-> app, no route out.
+  edge:
+    internal: true
+  # app <-> chromium (CDP + VNC), no route out.
+  backend:
+    internal: true
+  # chromium -> Spotify; app -> YouTube / Spotify image CDN / authentik.
+  egress: {}
+
+volumes:
+  app_data: {}
+  chromium_profile: {}
+  caddy_data: {}
+  caddy_config: {}
