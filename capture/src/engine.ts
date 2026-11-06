@@ -279,6 +279,7 @@ export class Engine {
     if (!(await this.confirmTrack(job))) throw new Error('Spotify never started the requested track.');
     if (!(await this.chrome.pauseAndSettle())) throw new Error('Spotify would not pause the track.');
     if (!(await this.chrome.seekToStart())) throw new Error('Spotify would not rewind the track to its start.');
+    this.log(`capture ${job.trackId}: on the track, paused at its start; recording`);
 
     const rec = new Recorder({
       file: job.file,
@@ -347,6 +348,16 @@ export class Engine {
         const movedOn = state.duration > 0 && (Math.abs(state.duration * 1000 - job.durationMs) > 5_000 || (!atEnd && state.position < 5));
         if (movedOn || Date.now() - endSeen > END_GRACE_MS) break;
         continue;
+      }
+      // The clock must move with real time from the start: a jump back (a late seek) or far ahead means the file no
+      // longer matches the song, so it is refused rather than stored.
+      if (verified && lastPosition >= 0 && state.position < lastPosition - 1.5) {
+        await rec.stop().catch(() => undefined);
+        throw new Error(`Spotify jumped back from ${Math.round(lastPosition)} s to ${Math.round(state.position)} s during the recording — try again.`);
+      }
+      if (verified && state.position > (Date.now() - started) / 1000 + 4) {
+        await rec.stop().catch(() => undefined);
+        throw new Error(`Spotify skipped ahead to ${Math.round(state.position)} s during the recording — try again.`);
       }
       if (Math.abs(state.position - lastPosition) < 0.02) stalls++;
       else stalls = 0;

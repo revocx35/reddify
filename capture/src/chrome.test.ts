@@ -113,13 +113,13 @@ describe('seekToStart', () => {
     await expect(p).resolves.toBe(true);
   });
 
-  it('falls back to the Home key on the range input when Spotify ignores the click', async () => {
+  it('never uses the keyboard (Spotify applies a Home key seconds later, mid-recording)', async () => {
     vi.useFakeTimers();
     const { c, sent } = player('home');
     const p = c.seekToStart();
-    await vi.advanceTimersByTimeAsync(5_000);
-    await expect(p).resolves.toBe(true);
-    expect(sent).toContain('Input.dispatchKeyEvent:keyUp');
+    await vi.advanceTimersByTimeAsync(20_000);
+    await expect(p).resolves.toBe(false);
+    expect(sent.some((x) => x.startsWith('Input.dispatchKeyEvent'))).toBe(false);
   });
 
   it('gives up after three tries instead of hanging', async () => {

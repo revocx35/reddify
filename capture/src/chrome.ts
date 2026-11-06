@@ -438,10 +438,9 @@ export class Chrome {
    * recording that has to be restarted — after an advert, say — begins at the first sample instead of mid-song.
    */
   async seekToStart(): Promise<boolean> {
-    // Spotify sometimes ignores a seek right after a pause/play change, and its clock text lags: try a few times, each
-    // with a trusted click on the bar's left edge and then the Home key on the bar's range input, and give the clock
-    // up to 2 s to show the rewind.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // A trusted click on the bar's left edge of a paused (settled) player, retried. No keyboard fallback: Spotify
+    // applies a Home key on the range input seconds later, and that rewound a recording mid-song on the deployment.
+    for (let attempt = 1; attempt <= 3; attempt++) {
       const at = await this.evaluate<{ x: number; y: number } | null>(`(() => {
         const bar = document.querySelector('[data-testid="playback-progressbar"]');
         if (!bar) return null;
@@ -453,15 +452,9 @@ export class Chrome {
       for (const type of ['mousePressed', 'mouseReleased']) {
         await this.cdp!.send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 }, this.sessionId!);
       }
-      if (await this.rewound(1000)) return true;
-      const focused = await this.evaluate<boolean>(
-        `(() => { const i = document.querySelector('[data-testid="playback-progressbar"] input[type="range"]'); if (!i) return false; i.focus(); return true; })()`,
-      );
-      if (focused) {
-        for (const type of ['keyDown', 'keyUp'] as const) {
-          await this.cdp!.send('Input.dispatchKeyEvent', { type, key: 'Home', code: 'Home', windowsVirtualKeyCode: 36, nativeVirtualKeyCode: 36 }, this.sessionId!);
-        }
-        if (await this.rewound(1000)) return true;
+      if (await this.rewound(1500)) {
+        if (attempt > 1) this.log(`rewind took ${attempt} clicks`);
+        return true;
       }
       await sleep(500);
     }
