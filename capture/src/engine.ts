@@ -346,21 +346,30 @@ export class Engine {
   }
 
   /**
-   * Waits until the player is on the track we asked for (its own duration is the check). Anything else — an advert, a
-   * queue that moved on — is waited out; Spotify plays the requested track after it by itself. False = it never came.
+   * Waits until the player is playing the track we asked for: the track page's own button reads "Pause" (the player is on
+   * this page's track, not a playlist or whatever the bar had queued from an earlier session) and the player's duration
+   * is the track's. Anything else — an advert, a queue that moved on — is waited out; Spotify plays the requested track
+   * after it by itself. A player that sits idle is nudged with the page's play button. False = it never came.
    */
   private async confirmTrack(job: Job): Promise<boolean> {
     const deadline = Date.now() + 180_000;
     let announced: number | null = null;
+    let idle = 0;
     while (Date.now() < deadline) {
       await sleep(500);
       const p = await this.chrome.player();
+      const mine = await this.chrome.trackPagePlaying();
       if (!p || p.duration <= 0) continue;
       const ms = Math.round(p.duration * 1000);
-      if (Math.abs(ms - job.durationMs) <= 5_000) {
-        if (p.paused) await this.chrome.pressPlay();
-        return true;
+      const rightLength = Math.abs(ms - job.durationMs) <= 5_000;
+      if (mine && rightLength) return true;
+      // Nothing of ours is playing (a stale bar from an earlier attempt, another song left paused, a lost click): press
+      // the page's own button again every 5 s. A playing advert is left alone.
+      if (!mine && p.paused) {
+        if (++idle % 10 === 0) await this.chrome.pressPlay();
+        continue;
       }
+      if (rightLength) continue;
       if (announced !== ms) {
         announced = ms;
         this.log(`capture ${job.trackId}: waiting out ${Math.round(ms / 1000)} s of something else (an advert)`);

@@ -135,6 +135,12 @@ export class Recorder extends EventEmitter {
   /** Ends the recording early (the track reached its length, or the page said it ended). */
   async stop(): Promise<void> {
     if (this.stopping) return this.waitDone();
+    if (!this.ffmpeg) {
+      // Still waiting for the first audible frame: there is no encoder whose exit would end the recording (and the
+      // reader's exit is ignored while stopping), so waiting here would hang the engine's queue for good.
+      this.fail('stopped before any audio reached the virtual speaker');
+      return;
+    }
     this.stopping = true;
     if (this.silenceTimer) clearTimeout(this.silenceTimer);
     this.silenceTimer = null;

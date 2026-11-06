@@ -452,35 +452,43 @@ export class Chrome {
     return !p || p.position <= 1;
   }
 
-  /** A trusted click on play (Chromium's Input domain counts as a real user gesture), else the space key. */
+  /**
+   * The track page's own play button. Never the first `play-button` in the document: the library sidebar has one per
+   * playlist ("Play Liked Songs" comes first), and pressing it plays that playlist instead of the track. Never the
+   * now-playing bar either: that resumes whatever Spotify had queued last.
+   */
+  static readonly TRACK_PLAY = `document.querySelector('[data-testid="action-bar-row"] [data-testid="play-button"]') || document.querySelector('[data-testid="track-page"] [data-testid="play-button"]')`;
+
+  /** True while the open track page's own button reads "Pause", i.e. the player is playing this page's track. */
+  async trackPagePlaying(): Promise<boolean> {
+    const label = await this.evaluate<string | null>(`(() => { const b = ${Chrome.TRACK_PLAY}; return b ? b.getAttribute('aria-label') : null; })()`).catch(
+      () => null,
+    );
+    return label === 'Pause';
+  }
+
+  /** A trusted click (Chromium's Input domain counts as a real user gesture) on the track page's own play button. */
   async pressPlay(): Promise<void> {
-    const target = await this.evaluate<{ x: number; y: number } | null>(`(() => {
-      const candidates = [
-        document.querySelector('[data-testid="play-button"]'),
-        document.querySelector('[data-testid="control-button-playpause"][aria-label="Play"]'),
-        document.querySelector('[data-testid="control-button-playpause"]'),
-      ];
-      for (const el of candidates) {
-        if (!el) continue;
-        el.scrollIntoView({ block: 'center', inline: 'center' });
-        const r = el.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      }
-      return null;
+    const target = await this.evaluate<{ x: number; y: number } | 'playing' | null>(`(() => {
+      const el = ${Chrome.TRACK_PLAY};
+      if (!el) return null;
+      if (el.getAttribute('aria-label') === 'Pause') return 'playing';
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return null;
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
     })()`);
-    if (target) {
-      for (const type of ['mousePressed', 'mouseReleased']) {
-        await this.cdp!.send('Input.dispatchMouseEvent', {
-          type,
-          x: Math.round(target.x),
-          y: Math.round(target.y),
-          button: 'left',
-          clickCount: 1,
-        }, this.sessionId!);
-      }
-      return;
+    if (target === 'playing') return;
+    if (!target) throw new Error('the track page has no play button');
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await this.cdp!.send('Input.dispatchMouseEvent', {
+        type,
+        x: Math.round(target.x),
+        y: Math.round(target.y),
+        button: 'left',
+        clickCount: 1,
+      }, this.sessionId!);
     }
-    await this.key('Space', ' ', 32);
   }
 
   async pressPause(): Promise<void> {

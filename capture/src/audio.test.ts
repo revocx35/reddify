@@ -1,5 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { firstAudibleFrame, frameBytes, levels, toneWav } from './audio.js';
+import { Recorder, firstAudibleFrame, frameBytes, levels, toneWav } from './audio.js';
 
 const RATE = 44100;
 
@@ -50,5 +53,21 @@ describe('recorder maths', () => {
     const l = levels(wav.subarray(44));
     expect(l.peakDb).toBeGreaterThan(-15);
     expect(l.peakDb).toBeLessThan(-10);
+  });
+});
+
+describe('Recorder.stop', () => {
+  it('ends a recording that never heard audio instead of waiting forever (it used to hang the engine queue)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rdf-rec-'));
+    const silent = path.join(dir, 'silent-parec');
+    fs.writeFileSync(silent, '#!/bin/sh\nexec cat /dev/zero\n', { mode: 0o755 });
+    const rec = new Recorder({ file: path.join(dir, 'x.flac'), parec: silent, ffmpeg: 'false', pulseServer: 'x', sink: 'x', rate: RATE, channels: 2, maxFrames: 0 });
+    rec.start();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(rec.state).toBe('waiting');
+    const stopped = await Promise.race([rec.stop().then(() => 'stopped'), new Promise((r) => setTimeout(() => r('hung'), 3000))]);
+    expect(stopped).toBe('stopped');
+    expect(rec.state).toBe('failed');
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -184,6 +184,8 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
 - Spotify Free works in the web player (AAC 128 kbit/s; Premium gets 256) and inserts adverts between tracks: the
   preflight waits an advert out before it starts recording, so an advert is never stored and the track is still captured.
   A duration that changes mid-capture aborts the file instead.
+- Starting a track: the engine clicks the track page's own play button (never the sidebar's or the now-playing bar's)
+  and accepts the track only when that button reads "Pause" and the player's duration is the track's.
 - The selftest proves Chrome → PulseAudio → FLAC with a test tone only; opening a track page, the preflight and the
   rewind are covered by `capture/src/chrome.test.ts` (stubbed browser) and by a real capture on the deployment.
 - **Ad blocking in this browser is a network rule, not an extension.** Chrome-branded builds stopped loading extensions
