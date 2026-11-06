@@ -29,7 +29,7 @@ YouTube only, or either with the other as fallback.
 |---|---|---|
 | `caddy` | TLS (internal CA / LE) or plain HTTP behind NPM (`Caddyfile.http`); only published ports | public, edge |
 | `app` | API + web UI + library + downloader; runs as uid 10001, read-only rootfs, no capabilities | edge, backend, egress |
-| `chromium` | `chromium/manager` (Go, from tiktok_logger/insta_logger): starts one sandboxed Chromium per instance under its own uid, relays CDP and VNC only with that instance's HMAC token | backend, egress |
+| `chromium` | `chromium/manager` (Go, from tiktok_logger/insta_logger): starts one sandboxed Google Chrome per instance under its own uid, relays CDP and VNC only with that instance's HMAC token. Chrome, not Debian's Chromium, because Spotify's page checks for Widevine as it loads and without a CDM renders a degraded player that says "Playback of protected content is not enabled"; this browser still never plays anything | backend, egress |
 | `capture` | `capture/` (Node + Google Chrome): one Chrome with Widevine plays Spotify's web player into a PulseAudio null sink; the engine records that sink to FLAC and streams it to the app. Token = `HMAC(CONTROL_SECRET, 'rdf/capture/token')`. One engine for the whole server (audio is serial) | backend, egress |
 | Android client | github.com/revocx35/reddify_android (Kotlin, Compose, Media3, Cast) | — |
 
@@ -162,9 +162,14 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
   When downloads start failing, bump `YTDLP_VERSION` in the Dockerfile and rebuild.
 - yt-dlp's JS challenge (deno) dominates first-play latency (~4 s); node is slower.
 - Playwright's Chromium has no AAC decoder (screenshot runs show "cannot play"); Debian Chromium / Chrome do.
-- **Widevine only exists in Google Chrome**, not in Debian's Chromium or Playwright's — that is why the capture container
-  installs Chrome's own .deb, and it is the reason the engine is a separate container instead of another instance in the
-  catalogue's Chromium manager. Widevine also refuses to initialise in headless mode, hence Xvfb.
+- **Widevine only exists in Google Chrome**, not in Debian's Chromium or Playwright's — both browsers here are Chrome's
+  own .deb: the catalogue one so Spotify's page renders normally (it still never plays), the engine one because that is
+  where audio is captured. The engine is a separate container for a different reason: it needs a PulseAudio sink, one
+  shared Spotify account and serial, real-time recording. Widevine also refuses to initialise in headless mode, hence
+  Xvfb in both.
+- With Chrome, the managed policy lives at `/etc/opt/chrome/policies/managed/` (`/etc/chromium/` is ignored and the
+  catalogue browser would then have no URL allowlist at all). Prove it after any change to that image: a navigation to a
+  host outside the allowlist must land on `chrome-error://chromewebdata/`.
 - A capture is real time and needs the engine's account to be free: Spotify plays one stream per account, so recording
   from the same account someone is listening on stops their playback. Use a dedicated account (any tier).
 - Spotify Free works in the web player (AAC 128 kbit/s; Premium gets 256) and inserts adverts between tracks: the

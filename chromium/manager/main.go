@@ -63,7 +63,7 @@ func main() {
 		},
 		Width: w, Height: h,
 		MaxInstances:  envInt("MAX_INSTANCES", 20),
-		ChromiumBin:   env("CHROMIUM_BIN", "chromium"),
+		ChromiumBin:   env("CHROMIUM_BIN", "/usr/bin/google-chrome-stable"),
 		TimeZone:      tz,
 		NoSandbox:     os.Getenv("CHROMIUM_NO_SANDBOX") == "1",
 		Debug:         os.Getenv("CHROMIUM_DEBUG") == "1",
