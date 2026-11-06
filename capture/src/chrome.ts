@@ -58,6 +58,8 @@ export class Chrome {
   private cdp: Cdp | null = null;
   private sessionId: string | null = null;
   private targetId: string | null = null;
+  private vncProc: ChildProcess | null = null;
+  private shuttingDown = false;
   private loginTarget: string | null = null;
   private loginPoll: NodeJS.Timeout | null = null;
   private starting: Promise<void> | null = null;
@@ -95,6 +97,7 @@ export class Chrome {
   }
 
   private async start(): Promise<void> {
+    this.shuttingDown = false;
     fs.mkdirSync(this.cfg.workDir, { recursive: true, mode: 0o700 });
     fs.mkdirSync(path.join(this.cfg.workDir, 'home'), { recursive: true, mode: 0o700 });
     fs.mkdirSync(path.join(this.cfg.workDir, 'tmp'), { recursive: true, mode: 0o700 });
@@ -110,6 +113,9 @@ export class Chrome {
 
     this.startXvfb();
     await this.waitFor(() => this.xvfbAlive(), 10_000, 'Xvfb did not start');
+    // The live screen the admin logs the engine in on (noVNC in Settings → Admin); the tunnel in server.ts connects to
+    // this port, so without it the panel says "connection lost".
+    this.startVnc();
     this.startPulse();
     await this.waitFor(async () => this.pulseReady(), 15_000, 'PulseAudio did not start');
     this.startChrome();
@@ -136,22 +142,24 @@ export class Chrome {
   }
 
   async stop(): Promise<void> {
+    this.shuttingDown = true;
     if (this.loginPoll) clearInterval(this.loginPoll);
     this.loginPoll = null;
     this.cdp?.close();
     this.cdp = null;
     this.sessionId = null;
     this.targetId = null;
-    for (const p of [this.browser, this.pulse, this.xvfb]) {
+    for (const p of [this.browser, this.pulse, this.vncProc, this.xvfb]) {
       if (p && p.exitCode === null) p.kill('SIGTERM');
     }
     // Chrome flushes its profile before it goes; give it a moment, then be firm.
     await new Promise((r) => setTimeout(r, 1500));
-    for (const p of [this.browser, this.pulse, this.xvfb]) {
+    for (const p of [this.browser, this.pulse, this.vncProc, this.xvfb]) {
       if (p && p.exitCode === null) p.kill('SIGKILL');
     }
     this.browser = null;
     this.pulse = null;
+    this.vncProc = null;
     this.xvfb = null;
     this.log('browser stopped');
   }
@@ -196,6 +204,46 @@ export class Chrome {
 
   private xvfbAlive(): boolean {
     return !!this.xvfb && this.xvfb.exitCode === null && fs.existsSync(`/tmp/.X11-unix/X${this.cfg.display}`);
+  }
+
+  /** x11vnc on the engine's virtual screen, with the per-start password the admin panel fetches. */
+  private startVnc(): void {
+    const pwFile = path.join(this.cfg.workDir, 'vncpw');
+    const spawnVnc = (): void => {
+      const p = spawn(
+        'x11vnc',
+        [
+          '-display',
+          `:${this.cfg.display}`,
+          '-rfbport',
+          '5900',
+          '-localhost',
+          '-noipv6',
+          '-passwdfile',
+          `read:${pwFile}`,
+          '-forever',
+          '-shared',
+          '-noxdamage',
+          '-nowf',
+          '-quiet',
+        ],
+        { stdio: ['ignore', 'ignore', 'pipe'], env: this.childEnv() },
+      );
+      this.vncProc = p;
+      let err = '';
+      p.stderr?.on('data', (d: Buffer) => {
+        err = (err + d.toString()).slice(-2000);
+      });
+      p.on('exit', (code) => {
+        this.vncProc = null;
+        if (this.shuttingDown) return;
+        this.log(`x11vnc exited (${code})${err.trim() ? `: ${err.trim().split('\n').pop()}` : ''}; restarting`);
+        setTimeout(() => {
+          if (!this.shuttingDown) spawnVnc();
+        }, 2000).unref();
+      });
+    };
+    spawnVnc();
   }
 
   private startPulse(): void {
