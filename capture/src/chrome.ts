@@ -383,11 +383,19 @@ export class Chrome {
   async openTrack(trackId: string): Promise<void> {
     for (let attempt = 0; attempt < 2; attempt++) {
       await this.goto(`${ORIGIN}/track/${trackId}`);
+      // waitFor resolves with nothing, so success is mapped to `true` here (comparing its result was always falsy and
+      // failed every capture). A check that throws mid-navigation (context destroyed) counts as "not yet".
       const ok = await this.waitFor(
-        async () => (await this.evaluate<boolean>(`!!document.querySelector('[data-testid="control-button-playpause"], [data-testid="play-button"]')`)) === true,
+        async () =>
+          (await this.evaluate<boolean>(`!!document.querySelector('[data-testid="control-button-playpause"], [data-testid="play-button"]')`).catch(
+            () => false,
+          )) === true,
         25_000,
         'the track page did not render',
-      ).catch(() => false);
+      ).then(
+        () => true,
+        () => false,
+      );
       if (ok || attempt === 1) {
         if (!ok) throw new Error('Spotify did not render the track page.');
         break;
