@@ -25,6 +25,8 @@ export interface CaptureConfig {
   maxQueue: number;
   /** Stop the engine's Chrome after this many idle minutes (0 = keep it running). */
   idleStopMinutes: number;
+  /** Send Spotify's advert hosts to a dead address (see adResolverRules); off by default. */
+  blockAds: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): CaptureConfig {
@@ -52,5 +54,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CaptureConfig 
     channels: Number(env.CHANNELS ?? 2),
     maxQueue: Number(env.MAX_QUEUE ?? 4),
     idleStopMinutes: Number(env.IDLE_STOP_MINUTES ?? 0),
+    blockAds: /^(1|true|yes|on)$/i.test(env.BLOCK_ADS ?? ''),
   };
 }

@@ -150,6 +150,9 @@ services:
       CONTROL_SECRET: ${CONTROL_SECRET:?run scripts/setup.sh first}
       SCREEN: ${SCREEN:-1280x1000x24}
       TZ: ${TZ:-UTC}
+      # 1 = send Spotify's advert hosts to a dead address (no extension: Chrome no longer runs uBlock Origin). The
+      # preflight already waits adverts out; this makes them disappear instead of playing, where Spotify allows it.
+      BLOCK_ADS: ${BLOCK_ADS:-0}
     volumes:
       - capture_profile:/data
       - type: tmpfs

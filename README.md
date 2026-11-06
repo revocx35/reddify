@@ -44,6 +44,10 @@ speaker and keeps it as lossless FLAC. Nothing is decrypted by us: Chrome plays,
 A Spotify capture is real time: the first play of a Spotify-sourced song starts a few seconds in and fills up as the song
 plays (the app streams the file while it is written); every later play is a plain file from the library.
 
+Adverts on a free account are waited out by the engine, so they never end up in a file. If you want them gone instead of
+waited out, set `BLOCK_ADS=1` for the `capture` container: it sends Spotify's advert hosts to a dead address inside that
+browser only (a network rule, because current Chrome no longer runs uBlock Origin — see ARCHITECTURE.md §5).
+
 ### authentik
 
 1. OAuth2/OpenID provider (confidential), redirect URI `https://<site>/api/auth/oidc/callback`, signing key RS256,

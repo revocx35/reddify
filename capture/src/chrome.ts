@@ -30,6 +30,27 @@ export interface PlayerState {
   artist: string | null;
 }
 
+/**
+ * Spotify's advert and ad-telemetry hosts, sent to a dead local address while the engine's Chrome runs when BLOCK_ADS is
+ * on. Deliberately only these: the music itself arrives from the audio CDNs (`*.spotify.com`, `*.akamaized.net`) and the
+ * player's API (`spclient.wg.spotify.com`) must never be touched, or playback breaks instead of the advert going away.
+ *
+ * This is the robust version of "install an ad blocker": a current Chrome refuses extensions loaded from the command line
+ * (`--load-extension` was removed in Chrome 137) and no longer runs uBlock Origin's manifest-v2 build at all, while a
+ * network-level rule needs no extension, no policy and no Web Store round trip inside a read-only container.
+ */
+export function adResolverRules(): string {
+  const hosts = [
+    'ads-fa.spotify.com',
+    'adeventtracker.spotify.com',
+    'pubads.g.doubleclick.net',
+    'securepubads.g.doubleclick.net',
+    'googleads.g.doubleclick.net',
+    'pagead2.googlesyndication.com',
+  ];
+  return hosts.map((h) => `MAP ${h} 127.0.0.1`).join(', ');
+}
+
 export class Chrome {
   private xvfb: ChildProcess | null = null;
   private pulse: ChildProcess | null = null;
@@ -241,8 +262,9 @@ export class Chrome {
       '--autoplay-policy=no-user-gesture-required',
       `--window-position=0,0`,
       `--window-size=${this.cfg.width},${this.cfg.height}`,
-      ORIGIN + '/',
     ];
+    if (this.cfg.blockAds) args.push(`--host-resolver-rules=${adResolverRules()}`);
+    args.push(ORIGIN + '/');
     this.browser = spawn(this.cfg.chromeBin, args, { stdio: ['ignore', 'ignore', 'pipe'], env: this.childEnv() });
     let err = '';
     this.browser.stderr?.on('data', (d: Buffer) => {

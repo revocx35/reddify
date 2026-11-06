@@ -170,6 +170,12 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
 - Spotify Free works in the web player (AAC 128 kbit/s; Premium gets 256) and inserts adverts between tracks: the
   preflight waits an advert out before it starts recording, so an advert is never stored and the track is still captured.
   A duration that changes mid-capture aborts the file instead.
+- **Ad blocking in this browser is a network rule, not an extension.** Chrome-branded builds stopped loading extensions
+  from the command line in 137 and no longer run uBlock Origin's manifest-v2 build at all, so `BLOCK_ADS=1` maps
+  Spotify's advert and ad-telemetry hosts to `127.0.0.1` for the engine's Chrome only (`adResolverRules()` in
+  `capture/src/chrome.ts`). Only those hosts: the audio CDNs, `spclient.wg.spotify.com`, pathfinder and the login must
+  stay reachable or playback breaks instead of the advert. Off by default; the preflight is what actually guarantees an
+  advert never reaches the library.
 - The FLAC file is written while the song plays, so its STREAMINFO length is only final after ffmpeg exits; a client that
   seeks during that first play may see an unknown duration. Every later play reads the finished file.
 - pathfinder hashes change with web player releases — learned automatically.
