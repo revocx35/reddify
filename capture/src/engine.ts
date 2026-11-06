@@ -268,6 +268,12 @@ export class Engine {
     job.state = 'playing';
     await this.chrome.openTrack(job.trackId);
     if (job.cancelled) throw new Error('cancelled');
+    // Preflight: play once and see what the player really starts. Spotify Free inserts an advert before a track now and
+    // then; it is waited out here, so an advert is never recorded and the track itself is still captured.
+    await this.chrome.pressPlay();
+    if (!(await this.confirmTrack(job))) throw new Error('Spotify never started the requested track.');
+    await this.chrome.pressPause().catch(() => undefined);
+    if (!(await this.chrome.seekToStart())) throw new Error('Spotify would not rewind the track to its start.');
 
     const rec = new Recorder({
       file: job.file,
@@ -314,7 +320,7 @@ export class Engine {
         if (state.duration > 0 && Math.abs(state.duration * 1000 - job.durationMs) > 5_000) {
           await rec.stop().catch(() => undefined);
           throw new Error(
-            `Spotify is playing a different recording (${Math.round(state.duration)} s instead of ${Math.round(job.durationMs / 1000)} s) — an advertisement, or a free account. Use a Premium account for the engine.`,
+            `Spotify played a different recording (${Math.round(state.duration)} s instead of ${Math.round(job.durationMs / 1000)} s) — try again.`,
           );
         }
         verified = true;
@@ -337,6 +343,30 @@ export class Engine {
     job.bytes = st.size;
     await this.chrome.pressPause().catch(() => undefined);
     this.log(`captured ${job.trackId} (${rec.frames} frames, ${Math.round(st.size / 1024)} KiB, ${Math.round((Date.now() - t0) / 1000)} s)`);
+  }
+
+  /**
+   * Waits until the player is on the track we asked for (its own duration is the check). Anything else — an advert, a
+   * queue that moved on — is waited out; Spotify plays the requested track after it by itself. False = it never came.
+   */
+  private async confirmTrack(job: Job): Promise<boolean> {
+    const deadline = Date.now() + 180_000;
+    let announced: number | null = null;
+    while (Date.now() < deadline) {
+      await sleep(500);
+      const p = await this.chrome.player();
+      if (!p || p.duration <= 0) continue;
+      const ms = Math.round(p.duration * 1000);
+      if (Math.abs(ms - job.durationMs) <= 5_000) {
+        if (p.paused) await this.chrome.pressPlay();
+        return true;
+      }
+      if (announced !== ms) {
+        announced = ms;
+        this.log(`capture ${job.trackId}: waiting out ${Math.round(ms / 1000)} s of something else (an advert)`);
+      }
+    }
+    return false;
   }
 
   private probe(file: string): Promise<{ codec: string | null }> {

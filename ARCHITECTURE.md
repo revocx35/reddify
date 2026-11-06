@@ -60,10 +60,11 @@ YouTube's JS challenge) writes the m4a straight into `library/tmp/<id>.m4a` with
 the download, so `GET /api/stream/:id` already serves Range requests from the growing file (`GrowingFileReader`).
 
 *Spotify* (the capture container): the engine opens `open.spotify.com/track/<id>` in its own Chrome (the only browser in
-the stack with Google's Widevine CDM), starts `parec` on the monitor of a PulseAudio null sink ("the virtual speaker"),
-presses play with a trusted CDP click, and encodes the sink to FLAC with ffmpeg. Before playing it reads the page's
-Media Session and refuses the capture when the player's duration is not the track's (an advert, a free account, or a
-queue that moved on), so the wrong audio can never become the file. The recorder starts the encoder at the first frame
+the stack with Google's Widevine CDM), presses play with a trusted CDP click, and checks what the player actually started
+against the track's own duration — an advert (Spotify Free inserts them between tracks) or a queue that moved on is waited
+out, never recorded. Only then does it pause, rewind to the start, start `parec` on the monitor of a PulseAudio null sink
+("the virtual speaker") and press play again; the sink is encoded to FLAC with ffmpeg. A duration that does not match
+mid-capture still aborts the file, so the wrong audio cannot reach the library. The recorder starts the encoder at the first frame
 above an audibility threshold (25 ms pre-roll) and stops at the track's own length, so the file starts where the music
 starts; when it is finished ffmpeg has written the final STREAMINFO block, which is what makes the duration and the
 seeking correct. Because the recording is real time, the app streams it **chunked while it is being written**
@@ -145,8 +146,9 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
   inside its own container. That is the same thing a sound card driver would see, and it is why the audio is FLAC (the
   decoded PCM, losslessly) and not the original AAC stream.
 - **Two connections, one choice.** YouTube Music (matching + yt-dlp, like spotDL) is fast, unpolluted and needs no
-  account; Spotify's own player is exact (no wrong match possible), but real time — one song takes one song — and wants a
-  Premium account of its own. The admin decides, including the fallback order, and the setting is stored in `settings`
+  account; Spotify's own player is exact (no wrong match possible), but real time — one song takes one song — and needs an
+  account of its own, of any tier: the web player serves Spotify Free at AAC 128 kbit/s and Premium at 256 (adverts are
+  waited out, not recorded). The admin decides, including the fallback order, and the setting is stored in `settings`
   (`audio_source`) so it survives restarts.
 - **Replay the web player, don't reimplement it.** Hashes/headers are learned from the page; nothing is signed or
   minted by Reddify. Spotify's Web API is rate-limited for these tokens, pathfinder isn't.
@@ -164,9 +166,10 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
   installs Chrome's own .deb, and it is the reason the engine is a separate container instead of another instance in the
   catalogue's Chromium manager. Widevine also refuses to initialise in headless mode, hence Xvfb.
 - A capture is real time and needs the engine's account to be free: Spotify plays one stream per account, so recording
-  from the same account someone is listening on stops their playback. Use a dedicated Premium account.
-- A free account injects adverts into the stream; the engine detects them (the player's duration is not the track's) and
-  fails the capture rather than storing an advert.
+  from the same account someone is listening on stops their playback. Use a dedicated account (any tier).
+- Spotify Free works in the web player (AAC 128 kbit/s; Premium gets 256) and inserts adverts between tracks: the
+  preflight waits an advert out before it starts recording, so an advert is never stored and the track is still captured.
+  A duration that changes mid-capture aborts the file instead.
 - The FLAC file is written while the song plays, so its STREAMINFO length is only final after ffmpeg exits; a client that
   seeks during that first play may see an unknown duration. Every later play reads the finished file.
 - pathfinder hashes change with web player releases — learned automatically.

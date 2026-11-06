@@ -32,9 +32,10 @@ The stack runs a second browser — Google Chrome, the only one with Google's Wi
 It plays the song in Spotify's own web player into a virtual speaker inside that container, and Reddify records that
 speaker and keeps it as lossless FLAC. Nothing is decrypted by us: Chrome plays, the CDM decrypts, the sink is read.
 
-1. **Settings → Admin → Spotify audio → Log in to Spotify** (or paste an `sp_dc` cookie). Use a **separate Premium
-   account**: Spotify plays one stream per account, so recording from the account you listen on will interrupt your
-   own playback, and a free account plays adverts into the recording (the engine detects and refuses those).
+1. **Settings → Admin → Spotify audio → Log in to Spotify** (or paste an `sp_dc` cookie). Use a **separate account**,
+   any tier — Spotify Free works: Spotify plays one stream per account, so recording from the account you listen on
+   will interrupt your own playback. Free streams in the web player at AAC 128 kbit/s (Premium: 256), and when an
+   advert comes before a track the engine waits it out instead of recording it.
 2. **Settings → Admin → Audio source** picks the connection: *Spotify only*, *YouTube Music only*, *YouTube Music first,
    Spotify as fallback*, or *Spotify first, YouTube Music as fallback*.
 3. **Test the capture** records a generated tone through the engine's own speaker and reports the length, the level, the

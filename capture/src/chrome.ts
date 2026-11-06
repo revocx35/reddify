@@ -353,6 +353,27 @@ export class Chrome {
     }
   }
 
+  /**
+   * Rewinds the player to the very start of the track (a trusted click on the left edge of Spotify's progress bar), so a
+   * recording that has to be restarted — after an advert, say — begins at the first sample instead of mid-song.
+   */
+  async seekToStart(): Promise<boolean> {
+    const at = await this.evaluate<{ x: number; y: number } | null>(`(() => {
+      const bar = document.querySelector('[data-testid="playback-progressbar"]');
+      if (!bar) return null;
+      const r = bar.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return null;
+      return { x: Math.round(r.left + 1), y: Math.round(r.top + r.height / 2) };
+    })()`);
+    if (!at) return false;
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await this.cdp!.send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 }, this.sessionId!);
+    }
+    await sleep(500);
+    const p = await this.player();
+    return !p || p.position <= 1;
+  }
+
   /** A trusted click on play (Chromium's Input domain counts as a real user gesture), else the space key. */
   async pressPlay(): Promise<void> {
     const target = await this.evaluate<{ x: number; y: number } | null>(`(() => {

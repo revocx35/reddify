@@ -608,8 +608,9 @@ function AudioEnginePanel() {
           ) : null}
           {screen ? <VncViewer viewOnly={false} className="spotify-screen" endpoint="/api/admin/capture/vnc" credentials={api.captureVncCredentials} /> : null}
           <p className="muted small">
-            Use a <b>separate Premium account</b> for the engine: Spotify plays one stream per account, so recording from your own account stops
-            playback on your phone. A free account plays ads into the recording and is refused.
+            Use a <b>separate account</b> for the engine — any tier, Spotify Free included: Spotify plays one stream per account, so recording
+            from the account you listen on stops playback on your phone. Free streams in the web player at 128 kbit/s (Premium at 256), and its
+            adverts are waited out instead of being recorded.
           </p>
           <form
             className="form row"
