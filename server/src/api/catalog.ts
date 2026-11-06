@@ -86,7 +86,7 @@ export function registerCatalogRoutes(app: FastifyInstance, ctx: AppContext): vo
     let playlists: LibraryResponse['playlists'] = [];
     const st = await s.loggedIn().catch(() => ({ loggedIn: false }));
     if (st.loggedIn) playlists = await ctx.catalog.libraryPlaylists(s, inst).catch(() => []);
-    return { liked: ctx.repo.likedIds(a.user.id).length, downloaded: ctx.repo.storage().tracks, playlists };
+    return { liked: ctx.repo.likedIds(a.user.id).length, downloaded: ctx.repo.storage().tracks, playlists, mine: ctx.repo.playlists(a.user.id) };
   });
 
   app.get('/api/library/liked', async (req): Promise<Track[]> => ctx.repo.likedTracks(requireUser(req).user.id));

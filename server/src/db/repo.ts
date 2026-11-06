@@ -1,4 +1,4 @@
-import type { AdminSettings, ArtistRef, InstanceMode, Role, Track } from '../../../shared/api.js';
+import type { AdminSettings, ArtistRef, CoverRef, InstanceMode, MyPlaylist, Role, Track } from '../../../shared/api.js';
 import type { DB } from './db.js';
 
 export interface UserRow {
@@ -61,6 +61,17 @@ interface TrackRow {
   duration_ms: number;
   explicit: number;
   updated_at: number;
+}
+
+interface PlaylistRow {
+  id: number;
+  user_id: number;
+  name: string;
+  description: string;
+  created_at: number;
+  updated_at: number;
+  count: number;
+  duration: number;
 }
 
 function rowToTrack(r: TrackRow, cached: boolean): Track {
@@ -383,6 +394,141 @@ export class Repo {
       .prepare('SELECT t.* FROM likes l JOIN tracks t ON t.id = l.track_id WHERE l.user_id = ? ORDER BY l.created_at DESC')
       .all(userId) as TrackRow[];
     return this.markCached(rows.map((r) => rowToTrack(r, false)));
+  }
+
+  /* -------------------------------------------------------------- playlists */
+
+  static readonly MAX_PLAYLISTS = 1000;
+  static readonly MAX_PLAYLIST_TRACKS = 10_000;
+
+  private playlistRow(r: PlaylistRow): MyPlaylist {
+    const covers = this.db
+      .prepare(
+        `SELECT t.id, t.cover, COALESCE(t.album_id, t.id) AS a, MIN(pt.pos) AS p FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id
+         WHERE pt.playlist_id = ? GROUP BY a ORDER BY p LIMIT 4`,
+      )
+      .all(r.id) as { id: string; cover: string | null }[];
+    return {
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      count: r.count,
+      durationMs: r.duration,
+      covers: covers.map((c): CoverRef => ({ url: c.cover, trackId: c.id })),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  private static readonly PLAYLIST_SELECT = `SELECT p.*, COUNT(pt.track_id) AS count, COALESCE(SUM(t.duration_ms), 0) AS duration
+    FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id LEFT JOIN tracks t ON t.id = pt.track_id`;
+
+  playlists(userId: number): MyPlaylist[] {
+    const rows = this.db.prepare(`${Repo.PLAYLIST_SELECT} WHERE p.user_id = ? GROUP BY p.id ORDER BY p.updated_at DESC`).all(userId) as PlaylistRow[];
+    return rows.map((r) => this.playlistRow(r));
+  }
+
+  /** The playlist if it exists AND belongs to `userId` (no one else may see or change it). */
+  playlist(userId: number, id: number): MyPlaylist | undefined {
+    const r = this.db.prepare(`${Repo.PLAYLIST_SELECT} WHERE p.id = ? AND p.user_id = ? GROUP BY p.id`).get(id, userId) as PlaylistRow | undefined;
+    return r ? this.playlistRow(r) : undefined;
+  }
+
+  countPlaylists(userId: number): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM playlists WHERE user_id = ?').get(userId) as { n: number }).n;
+  }
+
+  createPlaylist(userId: number, name: string, description: string): number {
+    const now = Date.now();
+    return Number(
+      this.db.prepare('INSERT INTO playlists (user_id, name, description, created_at, updated_at) VALUES (?,?,?,?,?)').run(userId, name, description, now, now)
+        .lastInsertRowid,
+    );
+  }
+
+  /** "My Playlist #n", like Spotify: the first number not used by one of the user's playlists. */
+  nextPlaylistName(userId: number): string {
+    const names = new Set((this.db.prepare('SELECT name FROM playlists WHERE user_id = ?').all(userId) as { name: string }[]).map((r) => r.name));
+    let n = names.size + 1;
+    for (let i = 1; i <= names.size + 1; i++) {
+      if (!names.has(`My Playlist #${i}`)) {
+        n = i;
+        break;
+      }
+    }
+    return `My Playlist #${n}`;
+  }
+
+  updatePlaylist(id: number, patch: { name?: string; description?: string }): void {
+    const sets: string[] = ['updated_at = @now'];
+    if (patch.name !== undefined) sets.push('name = @name');
+    if (patch.description !== undefined) sets.push('description = @description');
+    this.db.prepare(`UPDATE playlists SET ${sets.join(', ')} WHERE id = @id`).run({ id, now: Date.now(), name: patch.name, description: patch.description });
+  }
+
+  deletePlaylist(id: number): void {
+    this.db.prepare('DELETE FROM playlists WHERE id = ?').run(id);
+  }
+
+  playlistTracks(id: number): Track[] {
+    const rows = this.db
+      .prepare('SELECT t.* FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id WHERE pt.playlist_id = ? ORDER BY pt.pos')
+      .all(id) as TrackRow[];
+    return this.markCached(rows.map((r) => rowToTrack(r, false)));
+  }
+
+  /** Appends tracks (known to the `tracks` table) that are not in the playlist yet; returns how many were added. */
+  addToPlaylist(id: number, trackIds: string[]): number {
+    return this.db.transaction(() => {
+      let pos = (this.db.prepare('SELECT COUNT(*) AS n FROM playlist_tracks WHERE playlist_id = ?').get(id) as { n: number }).n;
+      const ins = this.db.prepare('INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, pos, added_at) VALUES (?,?,?,?)');
+      const now = Date.now();
+      let added = 0;
+      for (const t of trackIds) {
+        if (pos >= Repo.MAX_PLAYLIST_TRACKS) break;
+        if (ins.run(id, t, pos, now).changes) {
+          pos++;
+          added++;
+        }
+      }
+      this.updatePlaylist(id, {});
+      return added;
+    })();
+  }
+
+  removeFromPlaylist(id: number, trackId: string): boolean {
+    return this.db.transaction(() => {
+      const r = this.db.prepare('SELECT pos FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?').get(id, trackId) as { pos: number } | undefined;
+      if (!r) return false;
+      this.db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?').run(id, trackId);
+      this.db.prepare('UPDATE playlist_tracks SET pos = pos - 1 WHERE playlist_id = ? AND pos > ?').run(id, r.pos);
+      this.updatePlaylist(id, {});
+      return true;
+    })();
+  }
+
+  /** Moves one track to position `to` (0-based, clamped); the others shift. */
+  movePlaylistTrack(id: number, trackId: string, to: number): boolean {
+    return this.db.transaction(() => {
+      const r = this.db.prepare('SELECT pos FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?').get(id, trackId) as { pos: number } | undefined;
+      if (!r) return false;
+      const n = (this.db.prepare('SELECT COUNT(*) AS n FROM playlist_tracks WHERE playlist_id = ?').get(id) as { n: number }).n;
+      const dest = Math.max(0, Math.min(n - 1, to));
+      if (dest > r.pos) this.db.prepare('UPDATE playlist_tracks SET pos = pos - 1 WHERE playlist_id = ? AND pos > ? AND pos <= ?').run(id, r.pos, dest);
+      else if (dest < r.pos) this.db.prepare('UPDATE playlist_tracks SET pos = pos + 1 WHERE playlist_id = ? AND pos >= ? AND pos < ?').run(id, dest, r.pos);
+      this.db.prepare('UPDATE playlist_tracks SET pos = ? WHERE playlist_id = ? AND track_id = ?').run(dest, id, trackId);
+      this.updatePlaylist(id, {});
+      return true;
+    })();
+  }
+
+  /** Which of the user's playlists contain the track (for the "Add to playlist" menu's check marks). */
+  playlistsWith(userId: number, trackId: string): number[] {
+    return (
+      this.db
+        .prepare('SELECT p.id FROM playlists p JOIN playlist_tracks pt ON pt.playlist_id = p.id WHERE p.user_id = ? AND pt.track_id = ?')
+        .all(userId, trackId) as { id: number }[]
+    ).map((r) => r.id);
   }
 
   /* ------------------------------------------------------------------ audit */

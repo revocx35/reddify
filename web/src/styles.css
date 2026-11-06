@@ -51,7 +51,8 @@ button {
 }
 
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: var(--text);
 }
@@ -415,6 +416,14 @@ code {
 
 .side-lib-head {
   padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.side-create:hover {
+  color: var(--text);
+  background: var(--elev);
 }
 
 .side-lib-list {
@@ -626,6 +635,10 @@ code {
 /* --------------------------------------------------------- shelves/cards */
 .shelf {
   margin: 20px 0 12px;
+  /* Cards get a fixed share of the row (Spotify-style), never 1fr of it: a shelf with two cards on an ultrawide
+     screen must not blow them up to half the screen. The column count follows the shelf's own width. */
+  container-type: inline-size;
+  --cols: 2;
 }
 
 .shelf-head h2 {
@@ -642,11 +655,71 @@ code {
 .shelf-row {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(150px, 1fr);
+  grid-auto-columns: calc((100% - (var(--cols) - 1) * 4px) / var(--cols));
   gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
   margin: 0 -12px;
+}
+
+@container (min-width: 420px) {
+  .shelf-row {
+    --cols: 3;
+  }
+}
+
+@container (min-width: 620px) {
+  .shelf-row {
+    --cols: 4;
+  }
+}
+
+@container (min-width: 820px) {
+  .shelf-row {
+    --cols: 5;
+  }
+}
+
+@container (min-width: 1020px) {
+  .shelf-row {
+    --cols: 6;
+  }
+}
+
+@container (min-width: 1240px) {
+  .shelf-row {
+    --cols: 7;
+  }
+}
+
+@container (min-width: 1480px) {
+  .shelf-row {
+    --cols: 8;
+  }
+}
+
+@container (min-width: 1760px) {
+  .shelf-row {
+    --cols: 9;
+  }
+}
+
+@container (min-width: 2080px) {
+  .shelf-row {
+    --cols: 10;
+  }
+}
+
+@container (min-width: 2440px) {
+  .shelf-row {
+    --cols: 11;
+  }
+}
+
+@container (min-width: 2800px) {
+  .shelf-row {
+    --cols: 12;
+  }
 }
 
 .shelf-row::-webkit-scrollbar {
@@ -655,7 +728,7 @@ code {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(clamp(170px, 12%, 240px), 1fr));
   gap: 4px;
   margin: 0 -12px;
 }
@@ -2019,5 +2092,281 @@ input[type='radio'] {
 
   .login-card {
     padding: 32px 20px;
+  }
+}
+
+/* -------------------------------------------------------- own playlists */
+.img.mosaic {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  overflow: hidden;
+  aspect-ratio: 1;
+}
+
+.img.mosaic > .img {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  aspect-ratio: auto;
+}
+
+.page-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ph-art-btn {
+  position: relative;
+  flex: none;
+  border-radius: 4px;
+}
+
+.ph-art-btn .ph-art.img-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ph-art-edit {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.ph-art-btn:hover .ph-art-edit,
+.ph-art-btn:focus-visible .ph-art-edit {
+  opacity: 1;
+}
+
+.page-header h1.clickable {
+  cursor: pointer;
+}
+
+.menu.left {
+  left: 0;
+  right: auto;
+}
+
+.menu-sep {
+  height: 1px;
+  background: var(--elev-3);
+  margin: 4px 0;
+}
+
+.menu-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.menu-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-filter {
+  width: 100%;
+  background: var(--elev-3);
+  border: 0;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+}
+
+.tl-row[draggable='true'] {
+  cursor: grab;
+}
+
+.tl-row.drop-above {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tl-row.drop-below {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.find-songs {
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 1px solid var(--elev-3);
+}
+
+.find-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.find-list {
+  margin-top: 12px;
+}
+
+.find-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 2fr) minmax(0, 1fr) 48px 72px;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.find-row:hover {
+  background: var(--elev);
+}
+
+.find-row .tl-cover {
+  width: 40px;
+  height: 40px;
+}
+
+.find-album {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.find-added {
+  color: var(--accent);
+  justify-self: center;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--player-h) + 24px);
+  transform: translateX(-50%);
+  background: #e6e6e6;
+  color: #000;
+  font-weight: 500;
+  font-size: 14px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  max-width: calc(100vw - 32px);
+  animation: toast-in 0.2s ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+
+.dialog {
+  background: var(--elev-2);
+  color: var(--text);
+  border: 0;
+  border-radius: 8px;
+  padding: 24px;
+  width: min(524px, calc(100vw - 32px));
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+.dialog::backdrop {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dialog-head h2 {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.edit-grid {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 16px;
+}
+
+.edit-art {
+  width: 180px;
+  height: 180px;
+}
+
+.edit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edit-fields input,
+.edit-fields textarea {
+  background: var(--elev-3);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.edit-fields input:focus,
+.edit-fields textarea:focus {
+  outline: none;
+  border-color: var(--sub);
+}
+
+.edit-fields textarea {
+  flex: 1;
+  resize: none;
+  min-height: 120px;
+}
+
+.dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 860px) {
+  .toast {
+    bottom: calc(140px + env(safe-area-inset-bottom));
+  }
+
+  .edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .edit-art {
+    width: 140px;
+    height: 140px;
+    justify-self: center;
+  }
+
+  .find-row {
+    grid-template-columns: 40px minmax(0, 1fr) 64px;
+  }
+
+  .find-album,
+  .find-row > .muted.small {
+    display: none;
+  }
+
+  .ph-art-btn {
+    align-self: center;
+  }
+
+  .menu.left {
+    left: 8px;
+    right: 8px;
   }
 }

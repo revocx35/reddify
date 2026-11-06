@@ -6,6 +6,7 @@ of a song finds it on YouTube Music and keeps it in Reddify's library; after tha
 and even when Spotify is down.
 
 - Web app (desktop + phone), Android app (background playback, offline downloads), Chromecast from both.
+- Your own playlists (create, edit, reorder, copy a Spotify playlist), private per user and playable offline.
 - Multi-user: everyone can have their own Spotify login (own Chromium), or the admin shares one browser.
 - Sign-in with authentik (OIDC) and/or local accounts with 2FA.
 

@@ -1,8 +1,9 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import type { Card, Track } from '../../../shared/api';
+import type { Card, CoverRef, Track } from '../../../shared/api';
 import { api } from '../api/client';
 import { likes, useLiked } from '../player/likes';
+import { myPlaylists, useMyPlaylists } from '../player/playlists';
 import { type PlayContext, player, usePlayer } from '../player/player';
 import { Icon } from './Icon';
 
@@ -156,9 +157,77 @@ export function LikeButton({ id, size = 18 }: { id: string; size?: number }) {
   );
 }
 
-/** Small "…" menu for a track. */
-export function TrackMenu({ t }: { t: Track }) {
-  const [open, setOpen] = useState(false);
+export interface MenuAction {
+  label: string;
+  icon: string;
+  run: () => void;
+}
+
+/** A Reddify playlist's cover: 2x2 mosaic of four album covers, else the first cover, else a note. */
+export function PlaylistCover({ covers, className, alt = '' }: { covers: CoverRef[]; className?: string; alt?: string }) {
+  if (covers.length >= 4) {
+    return (
+      <span className={`img mosaic ${className ?? ''}`} aria-label={alt}>
+        {covers.slice(0, 4).map((c) => (
+          <Img key={c.trackId} src={c.url} trackId={c.trackId} alt="" />
+        ))}
+      </span>
+    );
+  }
+  const c = covers[0];
+  return <Img src={c?.url ?? null} trackId={c?.trackId} alt={alt} className={className} />;
+}
+
+/** "Add to playlist" list: a new playlist, then the user's playlists (check mark = already in it). */
+function AddToPlaylistMenu({ ids, onDone }: { ids: string[]; onDone: () => void }) {
+  const lists = useMyPlaylists();
+  const [has, setHas] = useState<Set<number>>(new Set());
+  const [filter, setFilter] = useState('');
+  const navigate = useNavigate();
+  useEffect(() => {
+    void myPlaylists.refresh();
+    if (ids.length === 1) api.trackPlaylists(ids[0]!).then((x) => setHas(new Set(x)), () => undefined);
+  }, [ids]);
+  const shown = lists.filter((p) => p.name.toLowerCase().includes(filter.trim().toLowerCase()));
+  return (
+    <>
+      {lists.length > 6 ? (
+        <input className="menu-filter" placeholder="Find a playlist" value={filter} onChange={(e) => setFilter(e.target.value)} onClick={(e) => e.stopPropagation()} autoFocus />
+      ) : null}
+      <button
+        role="menuitem"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDone();
+          void myPlaylists.create(ids).then((p) => p && navigate(`/my/${p.id}`));
+        }}
+      >
+        <Icon name="plus" size={16} /> New playlist
+      </button>
+      <div className="menu-sep" />
+      <div className="menu-scroll">
+        {shown.map((p) => (
+          <button
+            key={p.id}
+            role="menuitem"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDone();
+              void myPlaylists.add(p, ids);
+            }}
+          >
+            <Icon name={has.has(p.id) ? 'check' : 'music'} size={16} /> <span className="menu-text">{p.name}</span>
+          </button>
+        ))}
+        {!lists.length ? <div className="menu-label">No playlists yet</div> : null}
+      </div>
+    </>
+  );
+}
+
+/** Small "…" menu for a track. `extra` adds context actions (e.g. "Remove from this playlist"). */
+export function TrackMenu({ t, extra = [] }: { t: Track; extra?: MenuAction[] }) {
+  const [open, setOpen] = useState<false | 'main' | 'playlists'>(false);
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   useEffect(() => {
@@ -169,12 +238,13 @@ export function TrackMenu({ t }: { t: Track }) {
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [open]);
-  const item = (label: string, icon: string, fn: () => void) => (
+  const item = (label: string, icon: string, fn: () => void, keep = false) => (
     <button
+      key={label}
       role="menuitem"
       onClick={(e) => {
         e.stopPropagation();
-        setOpen(false);
+        if (!keep) setOpen(false);
         fn();
       }}
     >
@@ -188,13 +258,21 @@ export function TrackMenu({ t }: { t: Track }) {
         aria-label={`More options for ${t.name}`}
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((o) => !o);
+          setOpen((o) => (o ? false : 'main'));
         }}
       >
         <Icon name="more" size={18} />
       </button>
-      {open ? (
+      {open === 'playlists' ? (
         <div className="menu" role="menu">
+          {item('Back', 'back', () => setOpen('main'), true)}
+          <div className="menu-sep" />
+          <AddToPlaylistMenu ids={[t.id]} onDone={() => setOpen(false)} />
+        </div>
+      ) : open ? (
+        <div className="menu" role="menu">
+          {item('Add to playlist', 'playlistAdd', () => setOpen('playlists'), true)}
+          {extra.map((x) => item(x.label, x.icon, x.run))}
           {item('Play next', 'queue', () => player.playNext(t))}
           {item('Add to queue', 'plus', () => player.addToQueue(t))}
           {item(likes.has(t.id) ? 'Remove from Liked Songs' : 'Save to Liked Songs', 'heart', () => void likes.toggle(t.id))}
@@ -219,15 +297,21 @@ export function TrackList({
   showAlbum = true,
   numbered = false,
   showCover = true,
+  menuExtra,
+  onMove,
 }: {
   tracks: Track[];
   context: PlayContext;
   showAlbum?: boolean;
   numbered?: boolean;
   showCover?: boolean;
+  menuExtra?: (t: Track, i: number) => MenuAction[];
+  /** Enables drag-and-drop reordering (own playlists): called with the old and new index. */
+  onMove?: (from: number, to: number) => void;
 }) {
   const st = usePlayer();
   const cur = st.queue[st.index];
+  const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
   return (
     <div className={`tracklist ${showAlbum ? 'with-album' : ''}`} role="table">
       <div className="tl-head" role="row">
@@ -244,7 +328,12 @@ export function TrackList({
           <div
             key={`${t.id}:${i}`}
             role="row"
-            className={`tl-row ${active ? 'active' : ''} ${t.playable ? '' : 'dim'}`}
+            className={`tl-row ${active ? 'active' : ''} ${t.playable ? '' : 'dim'} ${drag?.over === i && drag.from !== i ? (drag.from < i ? 'drop-below' : 'drop-above') : ''}`}
+            draggable={!!onMove}
+            onDragStart={onMove ? (e) => (e.dataTransfer.setData('text/plain', t.name), (e.dataTransfer.effectAllowed = 'move'), setDrag({ from: i, over: i })) : undefined}
+            onDragOver={onMove ? (e) => (e.preventDefault(), drag && drag.over !== i && setDrag({ ...drag, over: i })) : undefined}
+            onDrop={onMove ? (e) => (e.preventDefault(), drag && drag.from !== i && onMove(drag.from, i), setDrag(null)) : undefined}
+            onDragEnd={onMove ? () => setDrag(null) : undefined}
             onDoubleClick={() => player.playList(tracks, i, context)}
             onClick={(e) => {
               // Touch screens: one tap plays (there is no double click).
@@ -281,7 +370,7 @@ export function TrackList({
             <span className="tl-dur">
               <LikeButton id={t.id} size={16} />
               <span>{t.durationMs ? fmtTime(t.durationMs / 1000) : ''}</span>
-              <TrackMenu t={t} />
+              <TrackMenu t={t} extra={menuExtra?.(t, i)} />
             </span>
           </div>
         );

@@ -3,6 +3,7 @@ import { registerAdminRoutes } from './api/admin.js';
 import { registerAuthRoutes } from './api/auth.js';
 import { registerCatalogRoutes } from './api/catalog.js';
 import { registerPlaybackRoutes } from './api/playback.js';
+import { registerPlaylistRoutes } from './api/playlists.js';
 import { registerSpotifyRoutes } from './api/spotify.js';
 import { AppTokenVerifier, OidcClient } from './auth/oidc.js';
 import { Sessions } from './auth/sessions.js';
@@ -50,6 +51,7 @@ async function main(): Promise<void> {
   registerAuthRoutes(app, ctx);
   registerCatalogRoutes(app, ctx);
   registerPlaybackRoutes(app, ctx);
+  registerPlaylistRoutes(app, ctx);
   registerSpotifyRoutes(app, ctx);
   registerAdminRoutes(app, ctx);
   setInterval(() => sessions.prune(), 3600_000).unref();

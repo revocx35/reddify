@@ -89,6 +89,26 @@ const MIGRATIONS: string[] = [
   );
   CREATE VIRTUAL TABLE tracks_fts USING fts5(name, artists, album, content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 2');
   `,
+  // 2: the users' own playlists (a track appears at most once per playlist; pos is 0-based and dense).
+  `
+  CREATE TABLE playlists (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX playlists_user ON playlists(user_id, updated_at DESC);
+  CREATE TABLE playlist_tracks (
+    playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    track_id TEXT NOT NULL REFERENCES tracks(id),
+    pos INTEGER NOT NULL,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, track_id)
+  ) WITHOUT ROWID;
+  CREATE INDEX playlist_tracks_pos ON playlist_tracks(playlist_id, pos);
+  `,
 ];
 
 export function openDb(dataDir: string): DB {

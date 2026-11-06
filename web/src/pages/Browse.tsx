@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { Track } from '../../../shared/api';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
+import { toast } from '../components/toast';
 import {
   CardTile,
   ErrorBox,
@@ -10,6 +11,7 @@ import {
   Loading,
   PageHeader,
   PlayButton,
+  PlaylistCover,
   Shelf,
   TrackList,
   fmtNumber,
@@ -17,6 +19,7 @@ import {
   useLoad,
 } from '../components/ui';
 import { player, usePlayer } from '../player/player';
+import { myPlaylists, useMyPlaylists } from '../player/playlists';
 import { useAuth } from '../state';
 
 function OfflineBanner() {
@@ -335,6 +338,8 @@ export function PlaylistPage() {
   const { data, error, reload } = useLoad(() => api.playlist(id), [id]);
   const [extra, setExtra] = useState<Track[]>([]);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const navigate = useNavigate();
   const st = usePlayer();
   useEffect(() => setExtra([]), [id]);
   const tracks = useMemo(() => [...(data?.tracks ?? []), ...extra], [data, extra]);
@@ -342,6 +347,27 @@ export function PlaylistPage() {
   if (!data) return <Loading />;
   const p = data.playlist;
   const ctx = { kind: 'playlist' as const, id: p.id, name: p.name };
+  /** Spotify playlists are read-only here: copy all songs (up to 1000) into a new Reddify playlist instead. */
+  const saveCopy = async () => {
+    setSaving(true);
+    try {
+      const all = [...tracks];
+      while (all.length < Math.min(data.total, 1000)) {
+        const r = await api.playlist(id, all.length);
+        if (!r.tracks.length) break;
+        all.push(...r.tracks);
+      }
+      const np = await myPlaylists.create(all.slice(0, 1000).map((t) => t.id), p.name);
+      if (np) {
+        toast(`Saved as ${np.name}`);
+        navigate(`/my/${np.id}`);
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not copy the playlist.');
+    } finally {
+      setSaving(false);
+    }
+  };
   const loadMore = async () => {
     setBusy(true);
     try {
@@ -361,6 +387,9 @@ export function PlaylistPage() {
       <div className="action-bar">
         <PlayButton size={56} playing={st.context?.id === p.id && st.playing} onClick={() => (st.context?.id === p.id ? player.toggle() : player.playList(tracks, 0, ctx))} />
         <ShuffleButton onClick={() => playShuffled(tracks, ctx)} />
+        <button className="btn btn-outline" disabled={saving} onClick={() => void saveCopy()} title="Make an editable copy in Your Library">
+          <Icon name="playlistAdd" size={18} /> {saving ? 'Saving…' : 'Save as my playlist'}
+        </button>
       </div>
       <TrackList tracks={tracks} context={ctx} />
       {tracks.length < data.total ? (
@@ -378,9 +407,17 @@ export function PlaylistPage() {
 
 export function CollectionPage() {
   const { data } = useLoad(() => api.library(), []);
+  const mine = useMyPlaylists();
+  const navigate = useNavigate();
+  useEffect(() => void myPlaylists.refresh(), []);
   return (
     <div className="page">
-      <h1 className="page-title">Your Library</h1>
+      <div className="page-title-row">
+        <h1 className="page-title">Your Library</h1>
+        <button className="btn btn-outline" onClick={() => void myPlaylists.create().then((p) => p && navigate(`/my/${p.id}`))}>
+          <Icon name="plus" size={18} /> Create playlist
+        </button>
+      </div>
       <div className="grid">
         <Link to="/collection/liked" className="card liked-card">
           <div className="liked-art">
@@ -410,6 +447,19 @@ export function CollectionPage() {
           <div className="card-title">Spotify Liked Songs</div>
           <div className="card-sub">From your Spotify account</div>
         </Link>
+        {mine.map((p) => (
+          <Link key={`my${p.id}`} to={`/my/${p.id}`} className="card">
+            <div className="card-art">
+              <PlaylistCover covers={p.covers} alt={p.name} />
+            </div>
+            <div className="card-title" title={p.name}>
+              {p.name}
+            </div>
+            <div className="card-sub">
+              Playlist • {p.count} {p.count === 1 ? 'song' : 'songs'}
+            </div>
+          </Link>
+        ))}
         {(data?.playlists ?? []).map((c) => (
           <CardTile key={c.id} c={c} />
         ))}

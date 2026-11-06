@@ -17,6 +17,7 @@ import {
   SpotifyLikedPage,
 } from './pages/Browse';
 import { Layout } from './pages/Layout';
+import { MyPlaylistPage } from './pages/MyPlaylist';
 import { ChangePasswordPage, LoginPage } from './pages/Login';
 import { SettingsPage } from './pages/Settings';
 import { AuthProvider, useAuth } from './state';
@@ -64,6 +65,7 @@ const router = createBrowserRouter([
           { path: '/album/:id', element: <AlbumPage /> },
           { path: '/artist/:id', element: <ArtistPage /> },
           { path: '/playlist/:id', element: <PlaylistPage /> },
+          { path: '/my/:id', element: <MyPlaylistPage /> },
           { path: '/collection', element: <CollectionPage /> },
           { path: '/collection/liked', element: <LikedPage /> },
           { path: '/collection/spotify', element: <SpotifyLikedPage /> },

@@ -1,4 +1,5 @@
 import type {
+  AddTracksResponse,
   AdminSettings,
   AdminUser,
   AlbumResponse,
@@ -8,6 +9,8 @@ import type {
   HomeResponse,
   LibraryResponse,
   Me,
+  MyPlaylist,
+  MyPlaylistResponse,
   PlaylistResponse,
   PrepareResponse,
   SearchResponse,
@@ -106,6 +109,17 @@ export const api = {
   spotifyLiked: (offset: number) => get<TrackPage>(`/api/library/spotify-liked?offset=${offset}`),
   downloads: (q: string, offset: number) => get<TrackPage>(`/api/library/downloads?q=${enc(q)}&offset=${offset}`),
   recent: () => get<Track[]>('/api/library/recent'),
+
+  // own playlists
+  myPlaylists: () => get<MyPlaylist[]>('/api/playlists'),
+  myPlaylist: (id: number, signal?: AbortSignal) => get<MyPlaylistResponse>(`/api/playlists/${id}`, signal),
+  createPlaylist: (body: { name?: string; description?: string; tracks?: string[] }) => post<MyPlaylistResponse>('/api/playlists', body),
+  updatePlaylist: (id: number, body: { name?: string; description?: string }) => request<MyPlaylist>('PATCH', `/api/playlists/${id}`, body),
+  deletePlaylist: (id: number) => request('DELETE', `/api/playlists/${id}`),
+  addToPlaylist: (id: number, ids: string[]) => post<AddTracksResponse>(`/api/playlists/${id}/tracks`, { ids }),
+  removeFromPlaylist: (id: number, trackId: string) => request<MyPlaylist>('DELETE', `/api/playlists/${id}/tracks/${enc(trackId)}`),
+  movePlaylistTrack: (id: number, trackId: string, to: number) => request<MyPlaylist>('PUT', `/api/playlists/${id}/tracks/${enc(trackId)}/position`, { to }),
+  trackPlaylists: (id: string) => get<number[]>(`/api/tracks/${enc(id)}/playlists`),
 
   // playback
   prepare: (id: string) => post<PrepareResponse>(`/api/tracks/${enc(id)}/prepare`),

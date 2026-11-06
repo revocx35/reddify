@@ -1,6 +1,6 @@
 /**
  * Reddify HTTP API contract (types only). Shared by the server (server/src), the web UI (web/src) and mirrored by
- * the Android client (android/core/.../Models.kt). Change this file first, then all three.
+ * the Android client (revocx35/reddify_android core/.../Models.kt). Change this file first, then all three.
  */
 
 export interface ArtistRef {
@@ -109,8 +109,53 @@ export interface CastResponse {
 export interface LibraryResponse {
   liked: number;
   downloaded: number;
-  /** The Spotify account's own playlists (empty when the browser is not logged in). */
+  /** The Spotify account's own playlists (empty when the browser is not logged in). Read-only. */
   playlists: Card[];
+  /** The user's own Reddify playlists (editable; stored on the Reddify server, work offline). */
+  mine: MyPlaylist[];
+}
+
+/** One cover tile of a Reddify playlist: Spotify CDN URL, with the library's cached cover as fallback. */
+export interface CoverRef {
+  url: string | null;
+  trackId: string;
+}
+
+/** A playlist the user made in Reddify (not on Spotify). Only its owner can see or change it. */
+export interface MyPlaylist {
+  id: number;
+  name: string;
+  description: string;
+  count: number;
+  durationMs: number;
+  /** Up to 4 covers of different albums (the clients draw a 2x2 mosaic with 4, else the first). */
+  covers: CoverRef[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MyPlaylistResponse {
+  playlist: MyPlaylist;
+  tracks: Track[];
+}
+
+/** POST /api/playlists. `tracks` (Spotify track ids) are added in order, e.g. to copy a Spotify playlist. */
+export interface CreatePlaylistRequest {
+  name?: string;
+  description?: string;
+  tracks?: string[];
+}
+
+/** PATCH /api/playlists/:id */
+export interface UpdatePlaylistRequest {
+  name?: string;
+  description?: string;
+}
+
+/** POST /api/playlists/:id/tracks → `added` new ones; tracks already in the playlist are skipped. */
+export interface AddTracksResponse {
+  added: number;
+  playlist: MyPlaylist;
 }
 
 export type InstanceMode = 'per-user' | 'shared';

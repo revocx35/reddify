@@ -56,11 +56,18 @@ FTS over the library, home → recently played / liked / library, recommendation
 file (metadata is in `tracks`). The Android app additionally keeps downloaded songs on the phone.
 
 **Multi-user and instances.** Users: local (argon2id) or authentik (OIDC, auto-created; first user or
-`OIDC_ADMIN_GROUP` = admin). Each user has their own Chromium instance (= their own Spotify login, personal home and
+`OIDC_ADMIN_GROUP` = admin; display name = authentik username, re-synced at each sign-in). Each user has their own Chromium instance (= their own Spotify login, personal home and
 recommendations) unless the admin sets **shared mode** (`settings.instance_mode = shared`, one instance for all).
 Idle browsers stop after `BROWSER_IDLE_MINUTES`. The library is shared by design (one file per Spotify track id).
 Spotify login: the instance owner (or an admin) opens Spotify's login page in a second tab and types it on the live
 screen (noVNC over `/api/vnc`), or pastes an `sp_dc` cookie. The tab closes itself once the `sp_dc` cookie exists.
+
+**Own playlists** (`api/playlists.ts`). Users create, rename, describe, reorder (drag on the web, move up/down on
+Android), add to and delete their own playlists; a Spotify playlist can be copied into one ("Save as my playlist",
+up to 1000 songs). They are stored in Reddify's DB, private to the owner (every route answers 404 for anyone else's
+id), work offline like Liked Songs (tracks keep their metadata in `tracks`), and never touch the Spotify account:
+writing Spotify playlists would need calls the web player's learned queries do not cover. A track appears once per
+playlist; positions are dense (0…n-1). Limits: 1000 playlists per user, 10 000 songs per playlist.
 
 **Casting.** Web: Google Cast sender SDK (Chrome only, loaded from gstatic). Android: Cast framework, "mirroring"
 (local ExoPlayer runs muted, track changes / play / pause / seek are repeated on the Chromecast). Both use
@@ -118,7 +125,7 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
 ## 6. Database (SQLite, `server/src/db/db.ts`)
 
 `users`, `sessions`, `settings` (instance mode), `ops` (learned queries), `tracks` (metadata), `files` (library:
-ready/failed, path, size, match), `plays`, `likes`, `audit` (180 days), `tracks_fts` (contentless FTS5 for offline
+ready/failed, path, size, match), `plays`, `likes`, `playlists` + `playlist_tracks` (own playlists, migration 2), `audit` (180 days), `tracks_fts` (contentless FTS5 for offline
 search). Migrations append-only.
 
 ## 7. Deployment

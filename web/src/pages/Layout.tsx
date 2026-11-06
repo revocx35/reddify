@@ -3,16 +3,21 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import type { Card, LibraryResponse } from '../../../shared/api';
 import { api } from '../api/client';
 import { Icon, Logo } from '../components/Icon';
-import { Artists, Img, LikeButton, fmtTime } from '../components/ui';
+import { toast, Toasts } from '../components/toast';
+import { Artists, Img, LikeButton, PlaylistCover, fmtTime } from '../components/ui';
 import { castSupported } from '../player/cast';
 import { likes } from '../player/likes';
+import { myPlaylists, useMyPlaylists } from '../player/playlists';
 import { player, usePlayer } from '../player/player';
 import { useAuth } from '../state';
 
 function SideLibrary() {
   const [lib, setLib] = useState<LibraryResponse | null>(null);
+  const mine = useMyPlaylists();
+  const navigate = useNavigate();
   useEffect(() => {
     api.library().then(setLib).catch(() => undefined);
+    void myPlaylists.refresh();
   }, []);
   const items: { to: string; name: string; sub: string; icon: string; img?: string | null; round?: boolean }[] = [
     { to: '/collection/liked', name: 'Liked Songs', sub: `Playlist • ${lib?.liked ?? 0} songs`, icon: 'heartFill' },
@@ -26,8 +31,27 @@ function SideLibrary() {
         <NavLink to="/collection" className="side-link">
           <Icon name="library" /> <span>Your Library</span>
         </NavLink>
+        <button
+          className="icon-btn side-create"
+          aria-label="Create playlist"
+          title="Create playlist"
+          onClick={() => void myPlaylists.create().then((p) => p && (navigate(`/my/${p.id}`), toast(`Created ${p.name}`)))}
+        >
+          <Icon name="plus" size={20} />
+        </button>
       </div>
       <div className="side-lib-list">
+        {mine.map((p) => (
+          <NavLink key={`my${p.id}`} to={`/my/${p.id}`} className="lib-item">
+            <PlaylistCover covers={p.covers} className="lib-art" />
+            <span className="lib-text">
+              <span className="lib-name">{p.name}</span>
+              <span className="lib-sub">
+                Playlist • {p.count} {p.count === 1 ? 'song' : 'songs'}
+              </span>
+            </span>
+          </NavLink>
+        ))}
         {[...items, ...sp].map((i) => (
           <NavLink key={i.to} to={i.to} className="lib-item">
             {i.img !== undefined ? (
@@ -405,6 +429,7 @@ export function Layout() {
         </NavLink>
       </nav>
       {expanded ? <NowPlaying onClose={() => setExpanded(false)} onQueue={() => setQueueOpen(true)} /> : null}
+      <Toasts />
     </div>
   );
 }
