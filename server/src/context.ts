@@ -4,6 +4,7 @@ import type { AppTokenVerifier, OidcClient } from './auth/oidc.js';
 import type { Sessions } from './auth/sessions.js';
 import type { Throttle } from './auth/throttle.js';
 import type { Downloader } from './library/downloader.js';
+import type { SpotifyCapture } from './library/capture.js';
 import type { Catalog } from './spotify/catalog.js';
 import type { SpotifyPool } from './spotify/session.js';
 
@@ -17,6 +18,8 @@ export interface AppContext {
   pool: SpotifyPool;
   catalog: Catalog;
   downloader: Downloader;
+  /** The Spotify audio engine (capture container); `configured` is false when the deployment has none. */
+  capture: SpotifyCapture;
   log: (msg: string) => void;
 }
 

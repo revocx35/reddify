@@ -1,0 +1,23 @@
+{
+  "name": "reddify-capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reddify's Spotify audio engine: Google Chrome (Widevine) plays Spotify's web player into a virtual PulseAudio speaker; the server records that sink and encodes it losslessly.",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "ws": "8.22.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}

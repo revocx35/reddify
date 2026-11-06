@@ -1,7 +1,16 @@
 import QRCode from 'qrcode';
 import { type FormEvent, useEffect, useState } from 'react';
 import { NavLink, useParams } from 'react-router';
-import type { AdminSettings, AdminUser, SessionInfo, SpotifyStatus, StorageStats } from '../../../shared/api';
+import type {
+  AdminSettings,
+  AdminUser,
+  AudioSource,
+  CaptureSelftest,
+  CaptureStatus,
+  SessionInfo,
+  SpotifyStatus,
+  StorageStats,
+} from '../../../shared/api';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { ErrorBox, Loading, Spinner, useLoad } from '../components/ui';
@@ -345,10 +354,39 @@ function AdminSettingsPanel() {
         )}
       </section>
       <section className="panel">
+        <h2>Audio source</h2>
+        {s ? (
+          <div className="form">
+            <label>
+              Where the songs come from
+              <select
+                value={s.audioSource}
+                onChange={(e) => void run(() => api.saveAdminSettings({ ...s, audioSource: e.target.value as AdminSettings['audioSource'] }))}
+              >
+                {AUDIO_SOURCE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="muted small">{AUDIO_SOURCE_OPTIONS.find((o) => o.value === s.audioSource)?.hint}</p>
+            <p className="muted small">
+              The first play of a song fetches it once and keeps the file in the shared library, so every later play — for everyone — comes from
+              disk, whatever this setting says.
+            </p>
+          </div>
+        ) : (
+          <Loading />
+        )}
+      </section>
+      <AudioEnginePanel />
+      <section className="panel">
         <h2>Library storage</h2>
         {st ? (
           <p>
-            {st.tracks} songs, {fmtBytes(st.bytes)} • {st.downloading} downloading • {st.failed} not found
+            {st.tracks} songs, {fmtBytes(st.bytes)} • {st.bySource.youtube} from YouTube Music, {st.bySource.spotify} from Spotify •{' '}
+            {st.downloading} downloading • {st.failed} not found
           </p>
         ) : (
           <Loading />
@@ -420,5 +458,179 @@ function AdminSettingsPanel() {
         </div>
       </section>
     </div>
+  );
+}
+
+/* ------------------------------------------------------- spotify audio engine */
+
+const AUDIO_SOURCE_OPTIONS: { value: AudioSource; label: string; hint: string }[] = [
+  {
+    value: 'youtube',
+    label: 'YouTube Music only',
+    hint: 'Every song is matched on YouTube Music, as before. Nothing is recorded from Spotify.',
+  },
+  {
+    value: 'spotify',
+    label: 'Spotify only',
+    hint: 'Every song is recorded from the Spotify audio engine. A song it cannot record is reported as not found — it is never replaced by a YouTube copy.',
+  },
+  {
+    value: 'youtube-preferred',
+    label: 'YouTube Music first, Spotify as fallback',
+    hint: 'YouTube Music is asked first; only a song it cannot match is recorded from Spotify.',
+  },
+  {
+    value: 'spotify-preferred',
+    label: 'Spotify first, YouTube Music as fallback',
+    hint: 'Spotify is recorded first; when the engine is down or the song cannot be played there, YouTube Music is used instead.',
+  },
+];
+
+/**
+ * The admin's view of the Spotify audio engine: its own Chrome (with Widevine) playing Spotify's web player into a
+ * virtual speaker that the server records. Nothing here touches the DRM — the browser decrypts, the sink is read.
+ */
+function AudioEnginePanel() {
+  const [st, setSt] = useState<CaptureStatus | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [test, setTest] = useState<CaptureSelftest | null>(null);
+  const [screen, setScreen] = useState(false);
+  const [cookie, setCookie] = useState('');
+
+  const load = () =>
+    api
+      .captureStatus()
+      .then(setSt)
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : 'Failed'));
+
+  useEffect(() => {
+    void load();
+    const t = window.setInterval(() => void load(), 5000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  const act = async (name: string, fn: () => Promise<unknown>, ok?: string) => {
+    setBusy(name);
+    setErr(null);
+    setMsg(null);
+    try {
+      await fn();
+      if (ok) setMsg(ok);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!st) return err ? <ErrorBox error={err} /> : <Loading />;
+  return (
+    <section className="panel">
+      <h2>Spotify audio engine</h2>
+      {err ? <p className="form-error">{err}</p> : null}
+      {msg ? <p className="form-ok">{msg}</p> : null}
+      {!st.configured ? (
+        <p className="muted small">
+          This deployment has no capture container (<code>CAPTURE_URL</code> is empty), so Spotify cannot be used as an audio source. Bring the
+          stack up with <code>docker compose up -d</code> to get it.
+        </p>
+      ) : (
+        <>
+          <div className="status-grid">
+            <span>Container</span>
+            <b className={st.browser === 'running' ? 'good' : 'warn'}>{st.browser}</b>
+            <span>Spotify account</span>
+            <b className={st.loggedIn ? 'good' : 'warn'}>{st.loggedIn ? `${st.account ?? 'logged in'}` : 'not logged in'}</b>
+            <span>Recording</span>
+            <b>{st.current ? 'now' : 'idle'}</b>
+            <span>Captured since start</span>
+            <b>{st.captured}</b>
+          </div>
+          <p className="muted small">
+            A separate Google Chrome (the only browser here with Widevine) plays the song in Spotify&apos;s own web player and the server records
+            the output of a virtual speaker. Nothing is decrypted or re-signed: the browser plays, the sink is read. Recording is real time, so the
+            first play of a Spotify-sourced song starts a few seconds in and fills up as it plays.
+          </p>
+          <div className="row wrap">
+            <button className="btn" disabled={!!busy} onClick={() => void act('ensure', () => api.captureEnsure(), 'The engine is starting.')}>
+              {busy === 'ensure' ? <Spinner size={16} /> : null} Start
+            </button>
+            <button className="btn" disabled={!!busy} onClick={() => void act('restart', () => api.captureRestart(), 'The engine restarted.')}>
+              {busy === 'restart' ? <Spinner size={16} /> : null} Restart
+            </button>
+            <button
+              className="btn btn-accent"
+              disabled={!!busy}
+              onClick={() =>
+                void act('login', async () => {
+                  await api.captureLogin();
+                  setScreen(true);
+                })
+              }
+            >
+              {busy === 'login' ? <Spinner size={16} /> : null} Log in to Spotify
+            </button>
+            {st.loggedIn ? (
+              <button className="btn" disabled={!!busy} onClick={() => void act('logout', () => api.captureLogout(), 'Logged out.')}>
+                Log out
+              </button>
+            ) : null}
+            <button className="btn" onClick={() => setScreen((v) => !v)}>
+              {screen ? 'Hide the screen' : 'Show the screen'}
+            </button>
+            <button
+              className="btn"
+              disabled={!!busy}
+              onClick={() =>
+                void act(
+                  'test',
+                  async () => {
+                    const r = await api.captureSelftest();
+                    setTest(r);
+                    if (!r.ok) throw new Error(r.error ?? 'The engine could not record its own test tone.');
+                  },
+                  'The engine recorded its test tone.',
+                )
+              }
+            >
+              {busy === 'test' ? <Spinner size={16} /> : null} Test the capture
+            </button>
+          </div>
+          {test ? (
+            <p className={test.ok ? 'form-ok' : 'form-error'}>
+              {test.ok ? 'Self-test passed' : 'Self-test failed'}: {test.frames} frames of {test.expectedFrames}
+              {test.trimmed ? ' (leading silence trimmed)' : ''}, peak {test.peakDb} dBFS, RMS {test.rmsDb} dBFS, {Math.round(test.bytes / 1024)} KB
+              {test.codec ? ` ${test.codec}` : ''} · Widevine: {test.widevine.length ? test.widevine.join(', ') : 'not available'}
+            </p>
+          ) : null}
+          {screen ? <VncViewer viewOnly={false} className="spotify-screen" endpoint="/api/admin/capture/vnc" credentials={api.captureVncCredentials} /> : null}
+          <p className="muted small">
+            Use a <b>separate Premium account</b> for the engine: Spotify plays one stream per account, so recording from your own account stops
+            playback on your phone. A free account plays ads into the recording and is refused.
+          </p>
+          <form
+            className="form row"
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              void act('cookie', () => api.captureCookie(cookie), 'Cookie imported.').then(() => setCookie(''));
+            }}
+          >
+            <input
+              type="password"
+              placeholder="Or paste the engine account's sp_dc cookie"
+              value={cookie}
+              onChange={(e) => setCookie(e.target.value)}
+              autoComplete="off"
+            />
+            <button className="btn" disabled={!!busy || cookie.length < 40}>
+              Use this login
+            </button>
+          </form>
+        </>
+      )}
+    </section>
   );
 }

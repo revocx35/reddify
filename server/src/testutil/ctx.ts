@@ -17,6 +17,7 @@ import { Repo } from '../db/repo.js';
 import { AppError } from '../errors.js';
 import { buildServer } from '../http/server.js';
 import { type DownloaderOptions, Downloader } from '../library/downloader.js';
+import { SpotifyCapture } from '../library/capture.js';
 import { Catalog } from '../spotify/catalog.js';
 import type { SpotifyPool } from '../spotify/session.js';
 
@@ -76,6 +77,7 @@ export function testConfig(dir: string, over: Partial<Config> = {}): Config {
     libraryDir: path.join(dir, 'library'),
     webDir: path.join(dir, 'no-web'),
     chromiumUrl: 'http://127.0.0.1:1',
+    captureUrl: null,
     controlSecret: Buffer.from('x'.repeat(40)),
     appKey: Buffer.alloc(32, 7),
     publicOrigin: null,
@@ -111,6 +113,7 @@ export async function makeApp(over: Partial<Config> = {}, dl: Partial<Downloader
     appTokens: null,
     pool,
     catalog: new Catalog(repo, 'UTC'),
+    capture: dl.capture ?? new SpotifyCapture(null, Buffer.alloc(32), () => undefined),
     downloader: new Downloader(repo, {
       libraryDir: config.libraryDir,
       ytdlp: 'false',

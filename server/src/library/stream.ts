@@ -25,7 +25,8 @@ export function parseRange(h: string | undefined, size: number): { start: number
   return { start, end };
 }
 
-/** Reads [start, end] of a file that another process is still appending to; waits for missing bytes. */
+/** Reads [start, end] of a file that another process is still appending to; waits for missing bytes.
+ *  `end` null = read to the end of a live recording, which only exists once the job is done. */
 class GrowingFileReader extends Readable {
   private pos: number;
   private fd: fsp.FileHandle | null = null;
@@ -35,7 +36,7 @@ class GrowingFileReader extends Readable {
   constructor(
     private readonly file: string,
     start: number,
-    private readonly end: number,
+    private readonly end: number | null,
     private readonly job: Job,
   ) {
     super({ highWaterMark: 256 * 1024 });
@@ -74,7 +75,7 @@ class GrowingFileReader extends Readable {
         if (!this.fd) throw new Error('file did not appear');
       }
       while (!this.destroyed) {
-        const want = Math.min(size, this.end - this.pos + 1);
+        const want = this.end === null ? size : Math.min(size, this.end - this.pos + 1);
         if (want <= 0) {
           this.push(null);
           return;
@@ -149,6 +150,15 @@ export async function sendJob(req: FastifyRequest, reply: FastifyReply, job: Job
   await job.meta;
   if (job.status === 'failed') throw Errors.unavailable(job.error ?? 'The download failed.');
   if (job.size === null) {
+    // A live capture (Spotify) is already being written in real time: serve it chunked from the first byte instead of
+    // making the listener wait for the whole song. No Content-Length, no ranges — it plays, it does not seek.
+    if (job.live && job.file) {
+      reply.header('Accept-Ranges', 'none');
+      reply.header('Content-Type', job.mime);
+      reply.header('Cache-Control', 'no-store');
+      if (req.method === 'HEAD') return reply.send();
+      return reply.send(new GrowingFileReader(job.file, 0, null, job));
+    }
     await job.done;
     if (job.status !== 'done' || !job.file) throw Errors.unavailable(job.error ?? 'The download failed.');
     const st = await fsp.stat(job.file);

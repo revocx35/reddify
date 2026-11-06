@@ -2,12 +2,14 @@
 
 Your own music app with Spotify's catalogue: Spotify's home page, search, albums, artists, playlists and
 recommendations, in a Spotify-like interface (in red), without ads. Songs play from your own server: the first play
-of a song finds it on YouTube Music and keeps it in Reddify's library; after that it plays from disk — for everyone,
-and even when Spotify is down.
+of a song keeps it in Reddify's library; after that it plays from disk — for everyone, and even when Spotify is down.
+The admin chooses where that first copy comes from: YouTube Music, Spotify itself (recorded from a real Spotify player
+in a Chrome with Widevine), or either one with the other as fallback.
 
 - Web app (desktop + phone), Android app (background playback, offline downloads), Chromecast from both.
 - Your own playlists (create, edit, reorder, copy a Spotify playlist), private per user and playable offline.
 - Multi-user: everyone can have their own Spotify login (own Chromium), or the admin shares one browser.
+- Audio from Spotify's own catalogue (exact, no wrong match) or YouTube Music (fast), per admin setting with fallback.
 - Sign-in with authentik (OIDC) and/or local accounts with 2FA.
 
 How it works and why: [ARCHITECTURE.md](ARCHITECTURE.md). Notes for AI agents: [AGENTS.md](AGENTS.md).
@@ -23,6 +25,23 @@ docker compose up -d --build
 Open the site and create the admin with the setup token printed by `setup.sh` (or sign in with OIDC first).
 Then **Settings → Spotify connection → Open the Spotify login** and log in on the browser screen (or paste your
 `sp_dc` cookie). Without a Spotify login, browsing works anonymously (no personal home/recommendations).
+
+### Spotify as the audio source
+
+The stack runs a second browser — Google Chrome, the only one with Google's Widevine CDM — in the `capture` container.
+It plays the song in Spotify's own web player into a virtual speaker inside that container, and Reddify records that
+speaker and keeps it as lossless FLAC. Nothing is decrypted by us: Chrome plays, the CDM decrypts, the sink is read.
+
+1. **Settings → Admin → Spotify audio → Log in to Spotify** (or paste an `sp_dc` cookie). Use a **separate Premium
+   account**: Spotify plays one stream per account, so recording from the account you listen on will interrupt your
+   own playback, and a free account plays adverts into the recording (the engine detects and refuses those).
+2. **Settings → Admin → Audio source** picks the connection: *Spotify only*, *YouTube Music only*, *YouTube Music first,
+   Spotify as fallback*, or *Spotify first, YouTube Music as fallback*.
+3. **Test the capture** records a generated tone through the engine's own speaker and reports the length, the level, the
+   codec and the Widevine levels Chrome offers — a one-click proof that the path works before any song is involved.
+
+A Spotify capture is real time: the first play of a Spotify-sourced song starts a few seconds in and fills up as the song
+plays (the app streams the file while it is written); every later play is a plain file from the library.
 
 ### authentik
 
@@ -48,5 +67,7 @@ releases page; a server built with the APK in `web/public/reddify.apk` also offe
 
 ## Notes
 
-Reddify never decrypts Spotify's DRM-protected streams; audio comes from YouTube Music. Use it for your own
+Reddify never decrypts Spotify's DRM-protected streams and never touches Widevine, its keys or its decrypted buffers:
+the audio it captures comes out of a real Spotify player in a real Chrome, at the point where the browser has already
+handed it to the operating system's audio stack (a virtual speaker inside its own container). Use it for your own
 listening and respect the terms of the services involved.

@@ -14,6 +14,7 @@ import { openDb } from './db/db.js';
 import { Repo } from './db/repo.js';
 import { buildServer } from './http/server.js';
 import { Downloader } from './library/downloader.js';
+import { SpotifyCapture } from './library/capture.js';
 import { Catalog } from './spotify/catalog.js';
 import { SpotifyPool } from './spotify/session.js';
 
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
     idleMs: config.sessionIdleMinutes * 60_000,
     absoluteMs: config.sessionAbsoluteDays * 86_400_000,
   });
+  const capture = new SpotifyCapture(config.captureUrl, config.controlSecret, log);
   const ctx: AppContext = {
     config,
     repo,
@@ -37,12 +39,14 @@ async function main(): Promise<void> {
     appTokens: config.oidcApp ? new AppTokenVerifier(config.oidcApp) : null,
     pool: new SpotifyPool(repo, config.chromiumUrl, config.controlSecret, config.browserIdleMinutes, log),
     catalog: new Catalog(repo, process.env.TZ || 'UTC'),
+    capture,
     downloader: new Downloader(repo, {
       libraryDir: config.libraryDir,
       ytdlp: config.ytdlp,
       python: config.python,
       helperDir: config.helperDir,
       maxParallel: config.maxParallelDownloads,
+      capture,
       log,
     }),
     log,

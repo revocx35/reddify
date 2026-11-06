@@ -109,6 +109,8 @@ const MIGRATIONS: string[] = [
   ) WITHOUT ROWID;
   CREATE INDEX playlist_tracks_pos ON playlist_tracks(playlist_id, pos);
   `,
+  // 3: which connection delivered a library file ('youtube' | 'spotify'), for the admin's per-source counts.
+  `ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'youtube';`,
 ];
 
 export function openDb(dataDir: string): DB {

@@ -66,6 +66,8 @@ services:
       PORT: "8080"
       HOST: 0.0.0.0
       CHROMIUM_URL: http://chromium:9223
+      # The Spotify audio engine (capture container). Empty disables the Spotify audio source entirely.
+      CAPTURE_URL: ${CAPTURE_URL:-http://capture:9224}
       # 1 = only the bundled Caddy; 2 = Caddy + your own reverse proxy in front (HTTP mode).
       TRUST_PROXY: ${TRUST_PROXY:-1}
     volumes:
@@ -127,6 +129,56 @@ services:
     pids_limit: 4096
     stop_grace_period: 20s
 
+  # Spotify's audio engine: Google Chrome (the only browser here with Widevine) plays Spotify's web player into a
+  # PulseAudio null sink ("virtual speaker") and records that sink. One engine for the whole server, because one Spotify
+  # account streams one song at a time. Nothing decrypts DRM: the CDM does, the browser plays, the sink is read.
+  capture:
+    build:
+      context: .
+      dockerfile: capture/Dockerfile
+    image: ${REDDIFY_IMAGE_PREFIX:-reddify}-capture:${REDDIFY_TAG:-local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    # The entrypoint prepares the tmpfs directories as root and drops to the chrome user (the browser's sandbox).
+    cap_add: [SETUID, SETGID, CHOWN]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./chromium/seccomp-chromium.json
+    logging: *logging
+    environment:
+      CONTROL_SECRET: ${CONTROL_SECRET:?run scripts/setup.sh first}
+      SCREEN: ${SCREEN:-1280x1000x24}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - capture_profile:/data
+      - type: tmpfs
+        target: /run/capture
+        tmpfs:
+          size: 1073741824
+          mode: 448
+      - type: tmpfs
+        target: /run/pulse
+        tmpfs:
+          size: 16777216
+          mode: 448
+      - type: tmpfs
+        target: /home/chrome
+        tmpfs:
+          size: 134217728
+          mode: 448
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 536870912
+          mode: 1023
+    shm_size: ${CAPTURE_SHM:-1gb}
+    networks: [backend, egress]
+    # Chrome, Xvfb and PulseAudio: roughly 600 MB-1 GB while playing.
+    mem_limit: ${CAPTURE_MEM_LIMIT:-2g}
+    pids_limit: 2048
+    stop_grace_period: 25s
+
 networks:
   public: {}
   # caddy <-> app, no route out.
@@ -141,5 +193,6 @@ networks:
 volumes:
   app_data: {}
   chromium_profile: {}
+  capture_profile: {}
   caddy_data: {}
   caddy_config: {}

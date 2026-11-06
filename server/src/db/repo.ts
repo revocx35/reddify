@@ -1,4 +1,4 @@
-import type { AdminSettings, ArtistRef, CoverRef, InstanceMode, MyPlaylist, Role, Track } from '../../../shared/api.js';
+import type { AdminSettings, ArtistRef, AudioSource, CoverRef, InstanceMode, MyPlaylist, Role, Track } from '../../../shared/api.js';
 import type { DB } from './db.js';
 
 export interface UserRow {
@@ -43,6 +43,8 @@ export interface FileRow {
   size: number | null;
   mime: string | null;
   source_id: string | null;
+  /** Which connection delivered the file ('youtube' | 'spotify'). */
+  source: 'youtube' | 'spotify';
   match_score: number | null;
   error: string | null;
   has_cover: number;
@@ -208,7 +210,14 @@ export class Repo {
   adminSettings(): AdminSettings {
     const mode = this.setting('instance_mode') === 'shared' ? 'shared' : 'per-user';
     const shared = Number(this.setting('shared_instance') ?? '1');
-    return { instanceMode: mode as InstanceMode, sharedInstance: Number.isInteger(shared) && shared > 0 ? shared : 1 };
+    const source = this.setting('audio_source');
+    const audioSource: AudioSource =
+      source === 'spotify' || source === 'youtube-preferred' || source === 'spotify-preferred' ? source : 'youtube';
+    return {
+      instanceMode: mode as InstanceMode,
+      sharedInstance: Number.isInteger(shared) && shared > 0 ? shared : 1,
+      audioSource,
+    };
   }
 
   /* -------------------------------------------------------------------- ops */
@@ -286,24 +295,38 @@ export class Repo {
     return this.db.prepare('SELECT * FROM files WHERE track_id = ?').get(trackId) as FileRow | undefined;
   }
 
-  fileReady(f: { trackId: string; path: string; size: number; mime: string; sourceId: string; score: number; hasCover: boolean }): void {
+  fileReady(f: {
+    trackId: string;
+    path: string;
+    size: number;
+    mime: string;
+    sourceId: string;
+    source: 'youtube' | 'spotify';
+    score: number;
+    hasCover: boolean;
+  }): void {
     const t = this.db.prepare('SELECT rowid, * FROM tracks WHERE id = ?').get(f.trackId) as (TrackRow & { rowid: number }) | undefined;
     this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO files (track_id, status, path, size, mime, source_id, match_score, error, has_cover, created_at)
-           VALUES (?, 'ready', ?, ?, ?, ?, ?, NULL, ?, ?)
+          `INSERT INTO files (track_id, status, path, size, mime, source_id, source, match_score, error, has_cover, created_at)
+           VALUES (?, 'ready', ?, ?, ?, ?, ?, ?, NULL, ?, ?)
            ON CONFLICT(track_id) DO UPDATE SET status = 'ready', path = excluded.path, size = excluded.size, mime = excluded.mime,
-             source_id = excluded.source_id, match_score = excluded.match_score, error = NULL, has_cover = excluded.has_cover,
-             created_at = excluded.created_at`,
+             source_id = excluded.source_id, source = excluded.source, match_score = excluded.match_score, error = NULL,
+             has_cover = excluded.has_cover, created_at = excluded.created_at`,
         )
-        .run(f.trackId, f.path, f.size, f.mime, f.sourceId, f.score, f.hasCover ? 1 : 0, Date.now());
+        .run(f.trackId, f.path, f.size, f.mime, f.sourceId, f.source, f.score, f.hasCover ? 1 : 0, Date.now());
       if (t) {
         this.db.prepare('DELETE FROM tracks_fts WHERE rowid = ?').run(t.rowid);
         const artists = (JSON.parse(t.artists) as ArtistRef[]).map((a) => a.name).join(' ');
         this.db.prepare('INSERT INTO tracks_fts (rowid, name, artists, album) VALUES (?,?,?,?)').run(t.rowid, t.name, artists, t.album_name ?? '');
       }
     })();
+  }
+
+  /** Records that a track's cover was saved after all (the audio is published first, the cover follows). */
+  markCover(trackId: string, has: boolean): void {
+    this.db.prepare('UPDATE files SET has_cover = ? WHERE track_id = ?').run(has ? 1 : 0, trackId);
   }
 
   fileFailed(trackId: string, error: string): void {
@@ -324,13 +347,19 @@ export class Repo {
     })();
   }
 
-  storage(): { tracks: number; bytes: number; failed: number } {
+  storage(): { tracks: number; bytes: number; failed: number; bySource: { youtube: number; spotify: number } } {
     const r = this.db
       .prepare(
         "SELECT SUM(status = 'ready') AS tracks, COALESCE(SUM(CASE WHEN status = 'ready' THEN size END), 0) AS bytes, SUM(status = 'failed') AS failed FROM files",
       )
       .get() as { tracks: number | null; bytes: number; failed: number | null };
-    return { tracks: r.tracks ?? 0, bytes: r.bytes, failed: r.failed ?? 0 };
+    const per = this.db
+      .prepare("SELECT source, COUNT(*) AS n FROM files WHERE status = 'ready' GROUP BY source")
+      .all() as { source: string; n: number }[];
+    const bySource = { youtube: 0, spotify: 0 };
+    for (const row of per) if (row.source === 'spotify') bySource.spotify = row.n;
+    for (const row of per) if (row.source !== 'spotify') bySource.youtube += row.n;
+    return { tracks: r.tracks ?? 0, bytes: r.bytes, failed: r.failed ?? 0, bySource };
   }
 
   /** Library tracks (audio present), newest first, optionally filtered by a full-text query. */

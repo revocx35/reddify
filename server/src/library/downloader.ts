@@ -6,7 +6,9 @@ import path from 'node:path';
 import type { FileStatus, Track } from '../../../shared/api.js';
 import type { Repo } from '../db/repo.js';
 import { safeImageUrl } from '../spotify/parse.js';
+import type { SpotifyCapture } from './capture.js';
 import { type Candidate, pickBest, searchQuery } from './matcher.js';
+import { PROVIDER_LABELS, sourceOrder } from './sources.js';
 
 /*
  * Turns a Spotify track into a file in the shared library, once: match on YouTube Music (py/ytm.py + matcher.ts),
@@ -22,6 +24,7 @@ const EXT_MIME: Record<string, string> = {
   opus: 'audio/ogg',
   ogg: 'audio/ogg',
   mp3: 'audio/mpeg',
+  flac: 'audio/flac',
 };
 
 const RETRY_FAILED_AFTER_MS = 10 * 60_000;
@@ -37,6 +40,11 @@ export class Job extends EventEmitter {
   mime = 'audio/mp4';
   /** Exact final size when yt-dlp knows it up front; null otherwise (then the stream waits for the end). */
   size: number | null = null;
+  /**
+   * True when the bytes arrive in real time (a Spotify capture): the stream serves the growing file chunked from the
+   * first byte instead of waiting for the whole track.
+   */
+  live = false;
   error: string | null = null;
   /** Resolves once the format is known (file, mime, size) or the job failed. */
   readonly meta: Promise<void>;
@@ -72,9 +80,13 @@ export interface DownloaderOptions {
   helperDir: string;
   maxParallel: number;
   log?: (msg: string) => void;
-  /** Tests replace the YouTube Music search and the yt-dlp run. */
+  /** The Spotify audio engine (capture container); null/undefined when this deployment has none. */
+  capture?: SpotifyCapture | null;
+  /** Tests replace the YouTube Music search, the yt-dlp run and the Spotify capture. */
   search?: SearchFn;
   fetchAudio?: (videoId: string, outTemplate: string, onMeta: (ext: string, size: number | null) => void) => Promise<void>;
+  /** Writes the track's capture into `outFile` (FLAC); `onStarted` fires on the first byte. */
+  fetchSpotify?: (track: Track, outFile: string, onStarted: () => void) => Promise<void>;
   fetchCover?: (url: string) => Promise<Buffer | null>;
 }
 
@@ -181,7 +193,37 @@ export class Downloader {
     }
   }
 
+  /**
+   * Fetches the track from the connections the admin chose, in order: the first provider that delivers wins, and a
+   * `-preferred` setting falls through to the other one when the first cannot (a Spotify-only or YouTube-only setting
+   * does not, so the admin's choice is honoured).
+   */
   private async run(job: Job): Promise<void> {
+    const t = job.track;
+    const failures: string[] = [];
+    for (const provider of sourceOrder(this.repo.adminSettings().audioSource)) {
+      try {
+        if (provider === 'spotify') await this.fromSpotify(job);
+        else await this.fromYoutube(job);
+        job.finish('done');
+        return;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.log(`${t.id}: ${provider} could not deliver it: ${msg}`);
+        failures.push(`${PROVIDER_LABELS[provider]}: ${msg}`);
+        // Once bytes have gone to a client the stream cannot be restarted from another source.
+        if (job.live) throw new Error(failures.join(' '));
+        job.file = null;
+        job.size = null;
+        job.mime = 'audio/mp4';
+        job.status = 'matching';
+      }
+    }
+    throw new Error(failures.join(' ') || 'No audio connection is available.');
+  }
+
+  /** YouTube Music: search, score the candidates, let yt-dlp write the audio into tmp/. */
+  private async fromYoutube(job: Job): Promise<void> {
     const t = job.track;
     const t0 = Date.now();
     job.status = 'matching';
@@ -216,10 +258,67 @@ export class Downloader {
     await fsp.mkdir(path.dirname(abs), { recursive: true, mode: 0o700 });
     await fsp.rename(job.file, abs);
     job.file = abs;
+    // The track becomes playable and searchable as soon as the audio is there; the cover follows (a CDN that is slow or
+    // down must not hold back the library).
+    this.repo.fileReady({
+      trackId: t.id,
+      path: rel,
+      size: st.size,
+      mime: job.mime,
+      sourceId: best.candidate.videoId,
+      source: 'youtube',
+      score: best.score,
+      hasCover: false,
+    });
     const hasCover = await this.saveCover(t).catch(() => false);
-    this.repo.fileReady({ trackId: t.id, path: rel, size: st.size, mime: job.mime, sourceId: best.candidate.videoId, score: best.score, hasCover });
-    this.log(`downloaded ${t.id} (${Math.round(st.size / 1024)} KiB, score ${best.score}; matched ${tMatch} ms, streaming from ${tMeta} ms, done ${Date.now() - t0} ms)`);
-    job.finish('done');
+    if (hasCover) this.repo.markCover(t.id, true);
+    this.log(
+      `downloaded ${t.id} from YouTube Music (${Math.round(st.size / 1024)} KiB, score ${best.score}; matched ${tMatch} ms, streaming from ${tMeta} ms, done ${Date.now() - t0} ms)`,
+    );
+  }
+
+  /**
+   * Spotify: the capture container plays the track in the real web player and records the virtual speaker's output.
+   * The bytes are written here while the song is still playing, so the first play streams from the first byte.
+   */
+  private async fromSpotify(job: Job): Promise<void> {
+    const t = job.track;
+    const capture = this.opts.capture;
+    if (!capture?.configured) throw new Error('this deployment has no Spotify audio engine (CAPTURE_URL).');
+    const usable = await capture.usable();
+    if (!usable.ok) throw new Error(usable.reason ?? 'The Spotify audio engine cannot record right now.');
+    const t0 = Date.now();
+    job.status = 'downloading';
+    const out = path.join(this.tmpDir, `${t.id}.flac`);
+    job.file = out;
+    job.mime = EXT_MIME.flac!;
+    job.size = null;
+    const fetchSpotify = this.opts.fetchSpotify ?? ((tr, file, onStart) => capture.record(tr, file, onStart).then(() => undefined));
+    await fetchSpotify(t, out, () => {
+      // Real-time bytes from here on: the player starts as soon as the recording does.
+      job.live = true;
+      job.metaKnown();
+    });
+    const st = await fsp.stat(out);
+    if (st.size < 10_000) throw new Error('The Spotify recording is empty.');
+    const rel = path.join(t.id.slice(0, 2).toLowerCase(), `${t.id}.flac`);
+    const abs = path.join(this.opts.libraryDir, rel);
+    await fsp.mkdir(path.dirname(abs), { recursive: true, mode: 0o700 });
+    await fsp.rename(out, abs);
+    job.file = abs;
+    this.repo.fileReady({
+      trackId: t.id,
+      path: rel,
+      size: st.size,
+      mime: EXT_MIME.flac!,
+      sourceId: t.id,
+      source: 'spotify',
+      score: 1,
+      hasCover: false,
+    });
+    const hasCover = await this.saveCover(t).catch(() => false);
+    if (hasCover) this.repo.markCover(t.id, true);
+    this.log(`captured ${t.id} from Spotify (${Math.round(st.size / 1024)} KiB; done ${Date.now() - t0} ms)`);
   }
 
   private async saveCover(t: Track): Promise<boolean> {

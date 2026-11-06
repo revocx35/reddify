@@ -5,6 +5,8 @@ import type {
   AlbumResponse,
   ArtistResponse,
   AuthState,
+  CaptureSelftest,
+  CaptureStatus,
   CastResponse,
   HomeResponse,
   LibraryResponse,
@@ -149,4 +151,14 @@ export const api = {
   adminSettings: () => get<AdminSettings>('/api/admin/settings'),
   saveAdminSettings: (s: AdminSettings) => request<AdminSettings>('PUT', '/api/admin/settings', s),
   storage: () => get<StorageStats>('/api/admin/storage'),
+
+  // the Spotify audio engine (capture container)
+  captureStatus: () => get<CaptureStatus>('/api/admin/capture'),
+  captureEnsure: () => post<CaptureStatus>('/api/admin/capture/ensure'),
+  captureRestart: () => post<CaptureStatus>('/api/admin/capture/restart'),
+  captureLogin: () => post('/api/admin/capture/login'),
+  captureCookie: (spDc: string) => post<CaptureStatus>('/api/admin/capture/cookie', { spDc }),
+  captureLogout: () => post<CaptureStatus>('/api/admin/capture/logout'),
+  captureSelftest: () => post<CaptureSelftest>('/api/admin/capture/selftest'),
+  captureVncCredentials: () => get<VncCredentials>('/api/admin/capture/vnc/credentials'),
 };

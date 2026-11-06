@@ -10,6 +10,8 @@ export interface Config {
   webDir: string;
   /** Chromium manager (chromium container). */
   chromiumUrl: string;
+  /** Capture container (Chrome + Widevine + virtual speaker), or null when this deployment has none. */
+  captureUrl: string | null;
   controlSecret: Buffer;
   /** Key for cast URLs and other HMACs inside the app (derived from CONTROL_SECRET). */
   appKey: Buffer;
@@ -99,6 +101,7 @@ export function loadConfig(): Config {
     libraryDir: env('LIBRARY_DIR', path.join(dataDir, 'library'))!,
     webDir: env('WEB_DIR', path.resolve('web'))!,
     chromiumUrl: env('CHROMIUM_URL', 'http://chromium:9223')!.replace(/\/+$/, ''),
+    captureUrl: (env('CAPTURE_URL', 'http://capture:9224') ?? '').replace(/\/+$/, '') || null,
     controlSecret,
     appKey,
     publicOrigin,

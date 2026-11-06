@@ -17,6 +17,8 @@ jobs:
         run: cd server && npm ci && npx tsc --noEmit && npm test
       - name: Web build
         run: cd web && npm ci && npm run build
+      - name: Capture engine tests
+        run: cd capture && npm ci && npx tsc --noEmit && npm test
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
@@ -31,4 +33,5 @@ jobs:
         run: |
           docker build -t reddify-app:ci .
           docker build -t reddify-chromium:ci chromium
+          docker build -t reddify-capture:ci -f capture/Dockerfile .
           docker build -t reddify-caddy:ci caddy

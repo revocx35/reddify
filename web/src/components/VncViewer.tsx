@@ -7,10 +7,20 @@ import { Spinner } from './ui';
 type Status = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 /**
- * Live view of the background Chromium (Spotify) via noVNC over the app's authenticated
- * WebSocket bridge (/api/vnc). View-only by default outside onboarding.
+ * Live view of a background browser (the user's Spotify Chromium, or the admin's audio engine) via noVNC over the
+ * app's authenticated WebSocket bridge. View-only by default outside onboarding.
  */
-export function VncViewer({ viewOnly, className }: { viewOnly: boolean; className?: string }) {
+export function VncViewer({
+  viewOnly,
+  className,
+  endpoint = '/api/vnc',
+  credentials = () => api.vncCredentials(),
+}: {
+  viewOnly: boolean;
+  className?: string;
+  endpoint?: string;
+  credentials?: () => Promise<{ password: string }>;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RFB | null>(null);
   const [status, setStatus] = useState<Status>('connecting');
@@ -23,14 +33,14 @@ export function VncViewer({ viewOnly, className }: { viewOnly: boolean; classNam
     (async () => {
       let password = '';
       try {
-        password = (await api.vncCredentials()).password;
+        password = (await credentials()).password;
       } catch {
         if (!cancelled) setStatus('error');
         return;
       }
       if (cancelled || !hostRef.current) return;
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const rfb = new RFB(hostRef.current, `${proto}://${window.location.host}/api/vnc`, { credentials: { password }, shared: true });
+      const rfb = new RFB(hostRef.current, `${proto}://${window.location.host}${endpoint}`, { credentials: { password }, shared: true });
       rfb.scaleViewport = true;
       rfb.resizeSession = false;
       rfb.focusOnClick = true;
