@@ -25,7 +25,7 @@ authentik. Read [ARCHITECTURE.md](ARCHITECTURE.md) first (design, data flow, thr
 ```bash
 cd server && npm ci && npm test && npx tsc --noEmit          # 49 tests (vitest)
 cd web && npm ci && npx tsc --noEmit && npm run build
-cd capture && npm ci && npm test && npx tsc -p tsconfig.json --noEmit   # 19 tests (Spotify audio engine)
+cd capture && npm ci && npm test && npx tsc -p tsconfig.json --noEmit   # 22 tests (Spotify audio engine)
 cd chromium/manager && go test ./...
 docker compose build && docker compose up -d                   # after scripts/setup.sh
 ```
@@ -75,5 +75,6 @@ in this repo.
 - The capture engine's `waitFor()` resolves with **nothing**: map it with `.then(() => true, () => false)`, never test its result for truthiness (that made `openTrack` fail every Spotify capture with "did not render the track page" until 2026-11-06). The engine selftest plays a tone and never opens a track page, so it cannot catch track-page bugs; `capture/src/chrome.test.ts` does.
 - Spotify's page has many `[data-testid="play-button"]`s; the first is the library sidebar's "Play Liked Songs". The engine waits for and presses only the track page's own button (`Chrome.TRACK_PLAY`, inside `action-bar-row`; it renders after the bar's) and never the now-playing bar (that resumes whatever was queued). A track counts as playing only when that button reads "Pause" and the length matches: the bar keeps showing a track from an earlier attempt after a restart.
 - `Recorder.stop()` before the first audible frame must end the recorder itself (there is no encoder whose exit would); otherwise the engine's queue hangs until the container restarts.
+- Spotify's clock shows whole seconds: never end a capture on "position = duration" (it cut ~0.8 s off the song). The recorder ends at the track's exact length (`maxFrames`); the clock only opens a 3 s grace (`END_GRACE_MS`), cut short if Spotify moves on to another song. Seeking: a click on the bar's left edge, retried, with the Home key on its range input as fallback (`seekToStart`).
 - Shelves (`.shelf-row`) give each card a fixed share of the row from a container-query column count (2…12). Never `minmax(…, 1fr)` there: a shelf with two cards then blows them up to half of an ultrawide screen.
 - authentik users' display name is their authentik **username** (`preferred_username`), re-synced at every sign-in; authentik's `name` is often a placeholder ("authentik Default Admin").

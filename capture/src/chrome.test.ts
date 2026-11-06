@@ -83,3 +83,51 @@ describe('pressPlay', () => {
     expect(sent).toHaveLength(0);
   });
 });
+
+describe('seekToStart', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** A player whose clock only moves to 0 when `rewindOn` (a CDP input event) arrives. */
+  function player(rewindOn: 'click' | 'home' | 'never') {
+    const c = new Chrome({} as CaptureConfig);
+    let position = 129;
+    vi.spyOn(c, 'evaluate').mockImplementation(async (js: string) => (js.includes('focus()') ? true : { x: 446, y: 975 }) as never);
+    vi.spyOn(c, 'player').mockImplementation(async () => ({ position, duration: 218, ended: false, paused: true, volume: 1, muted: false, title: null, artist: null }));
+    const sent: string[] = [];
+    (c as unknown as { cdp: unknown }).cdp = {
+      send: async (m: string, p: { type: string; key?: string }) => {
+        sent.push(`${m}:${p.type}`);
+        if (rewindOn === 'click' && p.type === 'mouseReleased') position = 0;
+        if (rewindOn === 'home' && p.key === 'Home' && p.type === 'keyUp') position = 0;
+      },
+    };
+    (c as unknown as { sessionId: string }).sessionId = 's';
+    return { c, sent };
+  }
+
+  it('rewinds with a click on the bar', async () => {
+    vi.useFakeTimers();
+    const { c } = player('click');
+    const p = c.seekToStart();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(p).resolves.toBe(true);
+  });
+
+  it('falls back to the Home key on the range input when Spotify ignores the click', async () => {
+    vi.useFakeTimers();
+    const { c, sent } = player('home');
+    const p = c.seekToStart();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(p).resolves.toBe(true);
+    expect(sent).toContain('Input.dispatchKeyEvent:keyUp');
+  });
+
+  it('gives up after three tries instead of hanging', async () => {
+    vi.useFakeTimers();
+    const { c, sent } = player('never');
+    const p = c.seekToStart();
+    await vi.advanceTimersByTimeAsync(20_000);
+    await expect(p).resolves.toBe(false);
+    expect(sent.filter((s) => s === 'Input.dispatchMouseEvent:mouseReleased')).toHaveLength(3);
+  });
+});

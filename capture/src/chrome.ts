@@ -438,20 +438,45 @@ export class Chrome {
    * recording that has to be restarted — after an advert, say — begins at the first sample instead of mid-song.
    */
   async seekToStart(): Promise<boolean> {
-    const at = await this.evaluate<{ x: number; y: number } | null>(`(() => {
-      const bar = document.querySelector('[data-testid="playback-progressbar"]');
-      if (!bar) return null;
-      const r = bar.getBoundingClientRect();
-      if (r.width <= 0 || r.height <= 0) return null;
-      return { x: Math.round(r.left + 1), y: Math.round(r.top + r.height / 2) };
-    })()`);
-    if (!at) return false;
-    for (const type of ['mousePressed', 'mouseReleased']) {
-      await this.cdp!.send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 }, this.sessionId!);
+    // Spotify sometimes ignores a seek right after a pause/play change, and its clock text lags: try a few times, each
+    // with a trusted click on the bar's left edge and then the Home key on the bar's range input, and give the clock
+    // up to 2 s to show the rewind.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const at = await this.evaluate<{ x: number; y: number } | null>(`(() => {
+        const bar = document.querySelector('[data-testid="playback-progressbar"]');
+        if (!bar) return null;
+        const r = bar.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return null;
+        return { x: Math.round(r.left + 1), y: Math.round(r.top + r.height / 2) };
+      })()`);
+      if (!at) return false;
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        await this.cdp!.send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 }, this.sessionId!);
+      }
+      if (await this.rewound(1000)) return true;
+      const focused = await this.evaluate<boolean>(
+        `(() => { const i = document.querySelector('[data-testid="playback-progressbar"] input[type="range"]'); if (!i) return false; i.focus(); return true; })()`,
+      );
+      if (focused) {
+        for (const type of ['keyDown', 'keyUp'] as const) {
+          await this.cdp!.send('Input.dispatchKeyEvent', { type, key: 'Home', code: 'Home', windowsVirtualKeyCode: 36, nativeVirtualKeyCode: 36 }, this.sessionId!);
+        }
+        if (await this.rewound(1000)) return true;
+      }
+      await sleep(500);
     }
-    await sleep(500);
-    const p = await this.player();
-    return !p || p.position <= 1;
+    return false;
+  }
+
+  /** True once the player's clock shows the start of the track (within `ms`). */
+  private async rewound(ms: number): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    do {
+      await sleep(250);
+      const p = await this.player().catch(() => null);
+      if (!p || p.position <= 1) return true;
+    } while (Date.now() < deadline);
+    return false;
   }
 
   /**

@@ -32,6 +32,9 @@ export interface Job {
   cancelled: boolean;
 }
 
+/** How long the recorder may run on after Spotify's clock shows the end, to reach the track's exact length. */
+export const END_GRACE_MS = 3_000;
+
 export class Engine {
   private readonly jobs = new Map<string, Job>();
   private readonly queue: string[] = [];
@@ -247,6 +250,8 @@ export class Engine {
           job.state = 'failed';
           job.error = e instanceof Error ? e.message : String(e);
           this.log(`capture ${job.trackId} failed: ${job.error}`);
+          // Leave the account quiet: a failed attempt must not keep the song playing (it holds Spotify's one stream).
+          await this.chrome.pressPause().catch(() => undefined);
           await fsp.rm(job.file, { force: true }).catch(() => undefined);
         } finally {
           this.current = null;
@@ -301,6 +306,7 @@ export class Engine {
     let lastPosition = -1;
     let stalls = 0;
     let state: PlayerState | null = null;
+    let endSeen: number | null = null;
     while (true) {
       await sleep(250);
       if (job.cancelled) {
@@ -325,8 +331,16 @@ export class Engine {
         }
         verified = true;
       }
-      if (state.ended) break;
-      if (verified && state.paused && state.position >= Math.max(0, state.duration - 0.5)) break;
+      // The clock shows whole seconds, so "3:38 / 3:38" appears up to a second before the audio really ends: the end is
+      // the recorder reaching the track's exact length (maxFrames → state 'done'). The clock only starts a short grace
+      // period, cut short when Spotify visibly moves on to another song (its length or a restarted clock).
+      const atEnd = state.ended || (verified && state.position >= Math.max(0, state.duration - 0.5));
+      if (atEnd && endSeen === null) endSeen = Date.now();
+      if (endSeen !== null) {
+        const movedOn = state.duration > 0 && (Math.abs(state.duration * 1000 - job.durationMs) > 5_000 || (!atEnd && state.position < 5));
+        if (movedOn || Date.now() - endSeen > END_GRACE_MS) break;
+        continue;
+      }
       if (Math.abs(state.position - lastPosition) < 0.02) stalls++;
       else stalls = 0;
       lastPosition = state.position;
