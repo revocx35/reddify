@@ -468,13 +468,20 @@ export class Chrome {
     return false;
   }
 
-  /** True once the player's clock shows the start of the track (within `ms`). */
+  /**
+   * True once the player's clock shows the start of the track (within `ms`) and still does a second later: Spotify's
+   * bar shows a seek at once and can snap back when the player's own state disagrees.
+   */
   private async rewound(ms: number): Promise<boolean> {
     const deadline = Date.now() + ms;
     do {
       await sleep(250);
       const p = await this.player().catch(() => null);
-      if (!p || p.position <= 1) return true;
+      if (p && p.position <= 1) {
+        await sleep(1000);
+        const again = await this.player().catch(() => null);
+        if (again && again.position <= 1) return true;
+      }
     } while (Date.now() < deadline);
     return false;
   }
@@ -520,6 +527,26 @@ export class Chrome {
 
   async pressPause(): Promise<void> {
     await this.evaluate(`(() => { const b = document.querySelector('[data-testid="control-button-playpause"]'); if (b && b.getAttribute('aria-label') === 'Pause') b.click(); return true; })()`);
+  }
+
+  /**
+   * Pauses and waits until the pause has really landed: the bar's button reads "Play" and the clock has stopped. A seek
+   * sent while the pause is still in flight is undone by it (the clock showed 0:00, then jumped back to 2:25 and the
+   * recording started there).
+   */
+  async pauseAndSettle(timeoutMs = 5_000): Promise<boolean> {
+    await this.pressPause();
+    const deadline = Date.now() + timeoutMs;
+    let last: number | null = null;
+    while (Date.now() < deadline) {
+      await sleep(400);
+      const p = await this.player().catch(() => null);
+      if (!p) continue;
+      if (p.paused && last !== null && p.position === last) return true;
+      last = p.paused ? p.position : null;
+      if (!p.paused) await this.pressPause();
+    }
+    return false;
   }
 
   private async key(key: string, text: string, code: number): Promise<void> {

@@ -131,3 +131,41 @@ describe('seekToStart', () => {
     expect(sent.filter((s) => s === 'Input.dispatchMouseEvent:mouseReleased')).toHaveLength(3);
   });
 });
+
+describe('pause, then rewind (the race seen on the deployment)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('does not accept a rewind that snaps back to where the player was', async () => {
+    vi.useFakeTimers();
+    const c = new Chrome({} as CaptureConfig);
+    vi.spyOn(c, 'evaluate').mockImplementation(async (js: string) => (js.includes('focus()') ? true : { x: 446, y: 975 }) as never);
+    // The bar shows 0:00 right after every seek, then the player's own state (2:25) wins again.
+    let reads = 0;
+    vi.spyOn(c, 'player').mockImplementation(async () => ({ position: reads++ % 2 === 0 ? 0 : 145, duration: 218, ended: false, paused: true, volume: 1, muted: false, title: null, artist: null }));
+    (c as unknown as { cdp: unknown }).cdp = { send: async () => undefined };
+    (c as unknown as { sessionId: string }).sessionId = 's';
+    const p = c.seekToStart();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expect(p).resolves.toBe(false);
+  });
+
+  it('waits until the pause has landed and the clock stands still', async () => {
+    vi.useFakeTimers();
+    const c = new Chrome({} as CaptureConfig);
+    const pause = vi.spyOn(c, 'pressPause').mockResolvedValue(undefined);
+    const states = [
+      { position: 145, paused: false },
+      { position: 146, paused: true },
+      { position: 146, paused: true },
+    ];
+    let i = 0;
+    vi.spyOn(c, 'player').mockImplementation(async () => ({ ...states[Math.min(i++, states.length - 1)]!, duration: 218, ended: false, volume: 1, muted: false, title: null, artist: null }));
+    let settled = false;
+    const p = c.pauseAndSettle().finally(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(p).resolves.toBe(true);
+    expect(pause.mock.calls.length).toBe(2); // the first pause had not landed yet: pressed again
+  });
+});

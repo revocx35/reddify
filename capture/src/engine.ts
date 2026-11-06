@@ -277,7 +277,7 @@ export class Engine {
     // then; it is waited out here, so an advert is never recorded and the track itself is still captured.
     await this.chrome.pressPlay();
     if (!(await this.confirmTrack(job))) throw new Error('Spotify never started the requested track.');
-    await this.chrome.pressPause().catch(() => undefined);
+    if (!(await this.chrome.pauseAndSettle())) throw new Error('Spotify would not pause the track.');
     if (!(await this.chrome.seekToStart())) throw new Error('Spotify would not rewind the track to its start.');
 
     const rec = new Recorder({
@@ -323,6 +323,12 @@ export class Engine {
       state = await this.chrome.player();
       if (!state) continue;
       if (!verified && state.position > 0.4) {
+        // Safety net: the clock must be near the start (it moves with real time from 0). A track that resumed mid-song
+        // would otherwise become a file of its second half.
+        if (state.position > (Date.now() - started) / 1000 + 3) {
+          await rec.stop().catch(() => undefined);
+          throw new Error(`Spotify resumed the track at ${Math.round(state.position)} s instead of its start — try again.`);
+        }
         // Spotify tells us what it is actually playing: an advert (or a queue that moved on) must not become the file.
         if (state.duration > 0 && Math.abs(state.duration * 1000 - job.durationMs) > 5_000) {
           await rec.stop().catch(() => undefined);
