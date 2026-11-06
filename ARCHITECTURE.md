@@ -89,7 +89,7 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
   child processes get argv arrays (no shell); everything from Spotify's page is parsed defensively and capped; image
   URLs only from `*.scdn.co` / `*.spotifycdn.com`; CDP expressions embed only `JSON.stringify` literals.
 - **Abuse:** per-IP request budget, body limit 64 KiB, max 3 parallel downloads, file size cap 200 MB.
-- **Isolation:** the Chromium policy allows only Spotify + its login providers' hosts; each instance runs under its
+- **Isolation:** the Chromium policy allows only Spotify + its login providers' hosts (Google's sign-in also needs its country domains, listed one by one); each instance runs under its
   own uid with the Chromium sandbox on; the manager accepts only the instance's HMAC token (derived from
   `CONTROL_SECRET`, which the browsers never see). Containers: read-only rootfs, `cap_drop: ALL`,
   `no-new-privileges`, app as non-root.

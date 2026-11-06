@@ -65,6 +65,7 @@ in this repo.
 - yt-dlp reports `ext size` before it solves the JS challenge; the first audio bytes arrive ~4 s later.
 - A track that YouTube Music cannot match fails for 10 minutes (status `failed`), then may be retried.
 - Robolectric hands Media3's MediaController a null ComponentName: `PlayerConnection` does not connect under Robolectric.
-- authentik OAuth2 providers created through the API get **empty `grant_types`**; authorize then fails with "The request is otherwise malformed" (Reddify logs `OIDC callback refused: provider said invalid_request`). Set `authorization_code` (+ `refresh_token` for Android) explicitly explicitly.
+- authentik OAuth2 providers created through the API get **empty `grant_types`**; authorize then fails with "The request is otherwise malformed" (Reddify logs `OIDC callback refused: provider said invalid_request`). Set `authorization_code` (+ `refresh_token` for Android) explicitly.
 - authentik proxy providers reject partial PATCHes ("Internal host cannot be empty"): send the full body.
 - The Android client sends its own `rdf_` token as `Authorization`; with authentik it moves to `X-App-Authorization` and NPM swaps it back, so the server accepts `rdf_` tokens on both headers.
+- "Continue with Google" in the Spotify login hops through Google's **country domain** (`accounts.google.com.tr`, …) and `accounts.youtube.com` to set its cookies. Chromium's URL allowlist has no TLD wildcards, so each one is listed in `chromium/policies.json`; if a user from another country gets "blocked by administrator", add their `accounts.google.<tld>`.
