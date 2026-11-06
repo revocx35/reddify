@@ -12,6 +12,15 @@ function stubbed(rendered: () => boolean) {
 }
 
 describe('openTrack', () => {
+  it("waits for the track page's own play button, not the now-playing bar's (that one renders first)", async () => {
+    const { c } = stubbed(() => true);
+    const evaluate = vi.mocked(c.evaluate);
+    await c.openTrack('4qqMifvtYd4drJsSohaTss');
+    const js = String(evaluate.mock.calls[0]![0]);
+    expect(js).toContain('[data-testid="action-bar-row"] [data-testid="play-button"]');
+    expect(js).not.toContain('control-button-playpause');
+  });
+
   afterEach(() => vi.useRealTimers());
 
   it('accepts a track page whose play button is on screen', async () => {

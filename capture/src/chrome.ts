@@ -387,7 +387,9 @@ export class Chrome {
       // failed every capture). A check that throws mid-navigation (context destroyed) counts as "not yet".
       const ok = await this.waitFor(
         async () =>
-          (await this.evaluate<boolean>(`!!document.querySelector('[data-testid="control-button-playpause"], [data-testid="play-button"]')`).catch(
+          // The track page's own button, not any play button: the now-playing bar (and the sidebar's) render first, and
+          // pressPlay needs this one.
+          (await this.evaluate<boolean>(`!!(${Chrome.TRACK_PLAY})`).catch(
             () => false,
           )) === true,
         25_000,
