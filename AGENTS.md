@@ -17,14 +17,15 @@ authentik. Read [ARCHITECTURE.md](ARCHITECTURE.md) first (design, data flow, thr
 | `server/src/api/` | routes: auth, catalog, playback (+ cast), playlists (the users' own, private), spotify (+ VNC bridge), admin |
 | `server/src/__fixtures__/` | real pathfinder answers (2026-11-06) the parser tests pin |
 | `web/src/` | React UI: `pages/Layout.tsx` (sidebar, player bar, queue, mobile nav, now playing), `pages/Browse.tsx`, `pages/MyPlaylist.tsx` (own playlists), `pages/Settings.tsx`, `player/player.ts` (queue, autoplay, prefetch, Media Session), `player/cast.ts`, `player/playlists.ts`, `player/library.ts` (Your Library + edit mode) + `components/toast.tsx` |
+| `web/src/player/player.test.ts` | player unit tests (jsdom, API mocked): Smart Shuffle mixing/removal, stale answers |
 | `chromium/` | Chromium image + Go manager (shared design with tiktok_logger/insta_logger), `policies.json` = Spotify allowlist |
 | `scripts/setup.sh` | writes `.env`; `scripts/gen-android-icons.py` regenerates the Android client's icons from `web/src/components/Icon.tsx` (expects `../reddify_android`) |
 
 ## Commands
 
 ```bash
-cd server && npm ci && npm test && npx tsc --noEmit          # 49 tests (vitest)
-cd web && npm ci && npx tsc --noEmit && npm run build
+cd server && npm ci && npm test && npx tsc --noEmit          # 52 tests (vitest)
+cd web && npm ci && npx tsc --noEmit && npm test && npm run build   # 2 tests (player: Smart Shuffle)
 cd capture && npm ci && npm test && npx tsc -p tsconfig.json --noEmit   # 29 tests (Spotify audio engine)
 cd chromium/manager && go test ./...
 docker compose build && docker compose up -d                   # after scripts/setup.sh
@@ -78,3 +79,4 @@ in this repo.
 - Spotify's clock shows whole seconds: never end a capture on "position = duration" (it cut ~0.8 s off the song). The recorder ends at the track's exact length (`maxFrames`); the clock only opens a 3 s grace (`END_GRACE_MS`), cut short if Spotify moves on to another song. Pause and wait for it to land (`pauseAndSettle`) before seeking: a seek sent during the pause is undone by it (the clock shows 0:00, then snaps back). Seeking: a click on the bar's left edge, retried, with the Home key on its range input as fallback (`seekToStart`). The file starts at the first audible frame, a moment after "play", so the full length would end inside whatever Spotify autoplays next: the recorder holds the last 1.5 s back (`tailHoldMs`) and cuts at the digital-silence gap before the next song (`tailCut`). Spotify leaves `mediaSession.playbackState` at `none`; "paused" is read from the bar's play/pause button.
 - Shelves (`.shelf-row`) give each card a fixed share of the row from a container-query column count (2…12). Never `minmax(…, 1fr)` there: a shelf with two cards then blows them up to half of an ultrawide screen.
 - authentik users' display name is their authentik **username** (`preferred_username`), re-synced at every sign-in; authentik's `name` is often a placeholder ("authentik Default Admin").
+- Smart Shuffle is **not** Spotify's Smart Shuffle context: the `smartShuffle` pathfinder query answers `uri: ""` until a Spotify client has played the list with it, and Reddify's catalogue browser never plays. It is built from `internalLinkRecommenderTrack` (seeded from the playing list). Don't try to get the real one by playing in the catalogue browser (never-do list) or by minting spclient calls.

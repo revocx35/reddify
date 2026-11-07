@@ -46,7 +46,7 @@ or stale (`PersistedQueryNotFound`) operations are learned by navigating the tab
 (`api.spotify.com/v1`) is **not** used: it answers 429 to web-player tokens.
 
 Operations used: `home`, `searchDesktop`, `searchTracks`, `getAlbum`, `queryArtistOverview`, `fetchPlaylist`,
-`getTrack`, `internalLinkRecommenderTrack` (autoplay), `libraryV3` + `fetchLibraryTracks` (logged in only).
+`getTrack`, `internalLinkRecommenderTrack` (autoplay, Smart Shuffle), `libraryV3` + `fetchLibraryTracks` (logged in only).
 
 **Audio** (`server/src/library/`). The admin's `audio_source` setting decides the order the two connections are tried
 (`sources.ts`): `youtube`, `spotify` (no fallback — the admin's choice is honoured), `youtube-preferred` or
@@ -104,6 +104,18 @@ playlists are deleted (after a confirm; they only exist in Reddify). Spotify pla
 account's own library read (never from the client), so only items really in the library can be hidden. Removed items
 are listed under "Removed" in edit mode (also when Spotify is down) and `DELETE /api/library/hidden/:kind/:id`
 restores them. The built-in entries (Liked Songs, Library, Recently played, Spotify Liked Songs) are not removable.
+
+**Smart Shuffle** (`Catalog.smartShuffle`, `POST /api/smart-shuffle`, web `player.ts`, Android `PlayerConnection`).
+The shuffle button cycles off → shuffle → Smart Shuffle → off, as in Spotify. With Smart Shuffle on, the client sends the
+ids of the playing list (≤ 500); the server asks Spotify's per-track recommender (`internalLinkRecommenderTrack`, the
+same query autoplay uses, cached 10 min) for up to 5 random tracks of that list, mixes the answers round-robin and drops
+every track of the list and duplicates. The web player inserts one recommendation after every 3 upcoming songs (and
+tops up when none is ahead any more); Android adds them to the Media3 playlist, whose shuffle order puts each new item at
+a random place. Recommended songs carry a sparkle (queue, player bar, now playing) and are taken out of the queue again
+when Smart Shuffle is turned off (except the one playing). Spotify down → random library songs (`offline: true`).
+Why not Spotify's own Smart Shuffle: the web player's `smartShuffle` query only answers `{available, uri}`, and `uri` is
+empty until a Spotify client has *played* the list with Smart Shuffle on; the catalogue browser never plays, so its
+recommendations are not reachable through learned queries. Nothing is written to the Spotify account.
 
 **Casting.** Web: Google Cast sender SDK (Chrome only, loaded from gstatic). Android: Cast framework, "mirroring"
 (local ExoPlayer runs muted, track changes / play / pause / seek are repeated on the Chromecast). Both use

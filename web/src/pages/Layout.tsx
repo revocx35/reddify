@@ -240,8 +240,13 @@ function Controls() {
   const st = usePlayer();
   return (
     <div className="controls">
-      <button className={`icon-btn ${st.shuffle ? 'on' : ''}`} aria-label="Shuffle" aria-pressed={st.shuffle} onClick={() => player.toggleShuffle()}>
-        <Icon name="shuffle" size={18} />
+      <button
+        className={`icon-btn ${st.shuffle ? 'on' : ''}`}
+        aria-label={st.smart ? 'Smart Shuffle: on' : st.shuffle ? 'Shuffle: on' : 'Shuffle: off'}
+        title={st.smart ? 'Smart Shuffle (adds recommendations; click to turn off)' : st.shuffle ? 'Shuffle (click for Smart Shuffle)' : 'Shuffle'}
+        onClick={() => player.cycleShuffle()}
+      >
+        <Icon name={st.smart ? 'shuffleSmart' : 'shuffle'} size={18} />
       </button>
       <button className="icon-btn" aria-label="Previous" onClick={() => player.prev()}>
         <Icon name="prev" size={20} />
@@ -273,7 +278,14 @@ function QueuePanel({ onClose }: { onClose: () => void }) {
     <div key={`${t.id}:${i}`} className="q-row" onDoubleClick={() => player.jumpTo(i)}>
       <Img src={t.cover} trackId={t.id} alt="" className="q-art" />
       <span className="q-text" onClick={() => player.jumpTo(i)}>
-        <span className="q-name">{t.name}</span>
+        <span className="q-name">
+          {st.smart && st.smartIds.includes(t.id) ? (
+            <span className="smart-pick" title="Added by Smart Shuffle">
+              <Icon name="sparkle" size={12} />
+            </span>
+          ) : null}
+          {t.name}
+        </span>
         <span className="q-sub">{t.artists.map((a) => a.name).join(', ')}</span>
       </span>
       <button className="icon-btn" aria-label="Remove from queue" onClick={() => player.removeFromQueue(i)}>
@@ -297,7 +309,12 @@ function QueuePanel({ onClose }: { onClose: () => void }) {
       ) : (
         <p className="muted">Nothing is playing.</p>
       )}
-      {manual.length ? <h3>Next{st.context ? ` from: ${st.context.name}` : ''}</h3> : null}
+      {manual.length ? (
+        <h3>
+          Next{st.context ? ` from: ${st.context.name}` : ''}
+          {st.smart ? <span className="muted small"> · Smart Shuffle</span> : null}
+        </h3>
+      ) : null}
       {manual.map(row)}
       {auto.length ? <h3>Recommended next (autoplay)</h3> : null}
       {auto.map(row)}
@@ -317,7 +334,14 @@ function PlayerBar({ onQueue, onExpand }: { onQueue: () => void; onExpand: () =>
               <Img src={t.cover} trackId={t.id} alt="" className="pb-art" />
             </button>
             <div className="pb-text">
-              <span className="pb-name">{t.name}</span>
+              <span className="pb-name">
+                {st.smart && st.smartIds.includes(t.id) ? (
+                  <span className="smart-pick" title="Recommended by Smart Shuffle">
+                    <Icon name="sparkle" size={12} />
+                  </span>
+                ) : null}
+                {t.name}
+              </span>
               <span className="pb-sub">
                 <Artists track={t} />
               </span>
@@ -410,7 +434,15 @@ function NowPlaying({ onClose, onQueue }: { onClose: () => void; onQueue: () => 
       {st.error ? <div className="pb-error">{st.error}</div> : null}
       <div className="np-foot">
         <CastButton />
-        <span className="muted small">{st.castDevice ? `Playing on ${st.castDevice}` : t.cached ? 'From your library' : ''}</span>
+        <span className="muted small">
+          {st.castDevice
+            ? `Playing on ${st.castDevice}`
+            : st.smart && st.smartIds.includes(t.id)
+              ? 'Recommended by Smart Shuffle'
+              : t.cached
+                ? 'From your library'
+                : ''}
+        </span>
       </div>
     </div>
   );

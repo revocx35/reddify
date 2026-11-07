@@ -17,6 +17,7 @@ import type {
   PrepareResponse,
   SearchResponse,
   SessionInfo,
+  SmartShuffleResponse,
   SpotifyStatus,
   StorageStats,
   Track,
@@ -101,6 +102,7 @@ export const api = {
   artist: (id: string) => get<ArtistResponse>(`/api/artist/${enc(id)}`),
   playlist: (id: string, offset = 0) => get<PlaylistResponse>(`/api/playlist/${enc(id)}?offset=${offset}`),
   track: (id: string) => get<Track>(`/api/track/${enc(id)}`),
+  smartShuffle: (trackIds: string[], count: number) => post<SmartShuffleResponse>('/api/smart-shuffle', { trackIds, count }),
   recommendations: (id: string) => get<Track[]>(`/api/track/${enc(id)}/recommendations`),
 
   // library

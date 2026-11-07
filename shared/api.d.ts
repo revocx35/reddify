@@ -135,6 +135,21 @@ export interface CaptureSelftest {
   error?: string;
 }
 
+/** POST /api/smart-shuffle: the tracks of what is playing (seeds + exclusions). */
+export interface SmartShuffleRequest {
+  /** Track ids of the playing list (1..500). Recommendations are seeded from a few of them and never repeat one. */
+  trackIds: string[];
+  /** How many recommendations to return (1..50, default 20). */
+  count?: number;
+}
+
+/** Spotify's recommendations to mix into a shuffled queue ("Smart Shuffle"). */
+export interface SmartShuffleResponse {
+  tracks: Track[];
+  /** true = Spotify was unreachable and these are random library tracks. */
+  offline: boolean;
+}
+
 export interface PrepareResponse {
   id: string;
   status: FileStatus;

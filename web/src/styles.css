@@ -2471,3 +2471,11 @@ input[type='radio'] {
 .card-hidden .card-art {
   opacity: 0.55;
 }
+
+/* Smart Shuffle: a sparkle marks the songs it added (queue, player bar). */
+.smart-pick {
+  display: inline-flex;
+  vertical-align: -1px;
+  margin-right: 4px;
+  color: var(--accent);
+}

@@ -20,6 +20,10 @@ export interface PlayerState {
   position: number;
   duration: number;
   shuffle: boolean;
+  /** Smart Shuffle (implies `shuffle`): Spotify recommendations are mixed into the shuffled queue. */
+  smart: boolean;
+  /** Ids of queued tracks that Smart Shuffle added (shown with a sparkle; removed when it is turned off). */
+  smartIds: string[];
   repeat: Repeat;
   volume: number;
   error: string | null;
@@ -37,6 +41,8 @@ const initial: PlayerState = {
   position: 0,
   duration: 0,
   shuffle: false,
+  smart: false,
+  smartIds: [],
   repeat: 'off',
   volume: Number(localStorage.getItem('reddify.volume') ?? '0.8') || 0.8,
   error: null,
@@ -68,6 +74,10 @@ export class Player {
   private reportedFor: string | null = null;
   private prefetchedFor: string | null = null;
   private original: Track[] | null = null;
+  /** Bumped whenever the list changes so a late Smart Shuffle answer is dropped. */
+  private listSeq = 0;
+  /** listSeq of the Smart Shuffle request in flight (-1 = none). */
+  private mixingFor = -1;
 
   constructor() {
     this.audio = new Audio();
@@ -128,8 +138,10 @@ export class Player {
       queue = [first, ...shuffled(list.filter((_, i) => i !== index))];
       index = 0;
     }
-    this.set({ queue, index, context, autoplayFrom: -1, error: null });
+    this.listSeq++;
+    this.set({ queue, index, context, autoplayFrom: -1, smartIds: [], error: null });
     void this.load(0);
+    if (this.state.smart) void this.mixInRecommendations();
   }
 
   playTrack(t: Track, context: PlayContext | null = null): void {
@@ -207,8 +219,46 @@ export class Player {
     this.set({ volume: vol });
   }
 
+  /** The player bar's shuffle button: off → shuffle → Smart Shuffle → off (like Spotify). */
+  cycleShuffle(): void {
+    if (!this.state.shuffle) this.toggleShuffle();
+    else if (!this.state.smart) this.setSmart(true);
+    else {
+      this.setSmart(false);
+      this.toggleShuffle();
+    }
+  }
+
+  /** Smart Shuffle on: shuffles (if needed) and mixes Spotify recommendations into what is left of the queue. Off:
+   *  takes the recommendations that have not played yet out of the queue again. */
+  setSmart(on: boolean): void {
+    if (on === this.state.smart) return;
+    if (on) {
+      if (!this.state.shuffle) this.toggleShuffle();
+      this.set({ smart: true });
+      void this.mixInRecommendations();
+      return;
+    }
+    this.listSeq++;
+    const smart = new Set(this.state.smartIds);
+    const { queue, index } = this.state;
+    const keep = queue.filter((t, i) => i <= index || !smart.has(t.id));
+    const removedBeforeAuto = this.state.autoplayFrom >= 0 ? queue.slice(index + 1, this.state.autoplayFrom).filter((t) => smart.has(t.id)).length : 0;
+    this.set({
+      smart: false,
+      smartIds: [],
+      queue: keep,
+      autoplayFrom: this.state.autoplayFrom >= 0 ? this.state.autoplayFrom - removedBeforeAuto : -1,
+    });
+  }
+
+  isSmartPick(id: string): boolean {
+    return this.state.smart && this.state.smartIds.includes(id);
+  }
+
   toggleShuffle(): void {
     const on = !this.state.shuffle;
+    if (!on && this.state.smart) this.setSmart(false);
     const { queue, index } = this.state;
     if (on && queue.length > 1) {
       this.original = queue;
@@ -221,6 +271,62 @@ export class Player {
       const i = cur ? orig.findIndex((t) => t.id === cur.id) : -1;
       this.set({ shuffle: false, queue: i >= 0 ? orig : queue, index: i >= 0 ? i : index });
     } else this.set({ shuffle: on });
+  }
+
+  /**
+   * Smart Shuffle: asks the server for Spotify recommendations seeded from the playing list and inserts one after
+   * every 3 upcoming songs (after the last recommendation already queued, so it also tops up long lists).
+   */
+  private async mixInRecommendations(): Promise<void> {
+    const seq = this.listSeq;
+    if (!this.state.smart || this.mixingFor === seq || this.state.index < 0) return;
+    const smart = new Set(this.state.smartIds);
+    const own = (this.original ?? this.state.queue).filter((t) => !smart.has(t.id));
+    const end0 = this.state.autoplayFrom >= 0 ? this.state.autoplayFrom : this.state.queue.length;
+    const room = Math.ceil(Math.max(0, end0 - this.state.index - 1) / 3);
+    if (!own.length || room === 0) return;
+    const ids = [...new Set([...this.state.queue.slice(this.state.index).map((t) => t.id), ...own.map((t) => t.id)])].slice(0, 500);
+    this.mixingFor = seq;
+    let recs: Track[] = [];
+    try {
+      recs = (await api.smartShuffle(ids, Math.min(50, Math.max(3, room)))).tracks;
+    } catch {
+      recs = [];
+    } finally {
+      if (this.mixingFor === seq) this.mixingFor = -1;
+    }
+    if (seq !== this.listSeq || !this.state.smart) return;
+    const { queue, index, autoplayFrom } = this.state;
+    const have = new Set(queue.map((t) => t.id));
+    const pool = recs.filter((t) => !have.has(t.id));
+    if (!pool.length) return;
+    const end = autoplayFrom >= 0 ? autoplayFrom : queue.length;
+    let from = index + 1;
+    for (let i = end - 1; i > index; i--) {
+      if (smart.has(queue[i]!.id)) {
+        from = i + 1;
+        break;
+      }
+    }
+    const out = queue.slice(0, from);
+    const added: string[] = [];
+    let run = 0;
+    for (let i = from; i < end; i++) {
+      out.push(queue[i]!);
+      if (++run === 3 && pool.length) {
+        const t = pool.shift()!;
+        out.push(t);
+        added.push(t.id);
+        run = 0;
+      }
+    }
+    out.push(...queue.slice(end));
+    if (!added.length) return;
+    this.set({
+      queue: out,
+      smartIds: [...this.state.smartIds, ...added],
+      autoplayFrom: autoplayFrom >= 0 ? autoplayFrom + added.length : -1,
+    });
   }
 
   cycleRepeat(): void {
@@ -311,6 +417,9 @@ export class Player {
       const nxt = this.state.queue[this.state.index + 1];
       if (nxt && !nxt.cached) void api.prepare(nxt.id).catch(() => undefined);
       else if (!nxt) void this.autoplay(false);
+      if (this.state.smart && !this.state.queue.slice(this.state.index + 1).some((q) => this.state.smartIds.includes(q.id))) {
+        void this.mixInRecommendations();
+      }
     }
     if ('mediaSession' in navigator && duration > 0 && pos <= duration) {
       try {

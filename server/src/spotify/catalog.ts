@@ -200,6 +200,36 @@ export class Catalog {
     return this.remember(r);
   }
 
+  /**
+   * Smart Shuffle: Spotify's recommendations for a few tracks of the playing list, mixed round-robin so every seed
+   * contributes, without any track of the list itself. Spotify's own Smart Shuffle context only exists once a
+   * Spotify client has played the list with it (the web player's `smartShuffle` query answers `uri: ""` before), and
+   * the catalogue browser never plays, so the same per-track recommender autoplay uses is the source.
+   * Throws "unavailable" only when every seed failed that way (the route then falls back to the library).
+   */
+  async smartShuffle(s: Querier, trackIds: string[], count: number, maxSeeds = 5): Promise<Track[]> {
+    const exclude = new Set(trackIds);
+    const seeds = sample([...exclude], maxSeeds);
+    const results = await Promise.allSettled(seeds.map((id) => this.recommendations(s, id)));
+    const lists = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+    if (!lists.length) {
+      const err = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')?.reason;
+      throw err ?? Errors.unavailable('Spotify gave no recommendations.');
+    }
+    const out: Track[] = [];
+    const seen = new Set(exclude);
+    for (let i = 0; out.length < count && lists.some((l) => i < l.length); i++) {
+      for (const l of lists) {
+        const t = l[i];
+        if (!t || seen.has(t.id)) continue;
+        seen.add(t.id);
+        out.push(t);
+        if (out.length >= count) break;
+      }
+    }
+    return out;
+  }
+
   async libraryPlaylists(s: Querier, instance: number): Promise<Card[]> {
     return this.cached(`library:${instance}`, async () => parseLibrary(await s.query('libraryV3', {})));
   }
@@ -211,6 +241,16 @@ export class Catalog {
     this.remember(r.tracks);
     return r;
   }
+}
+
+/** Up to `n` distinct random items of `a`. */
+export function sample<T>(a: T[], n: number): T[] {
+  const b = a.slice();
+  for (let i = b.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [b[i], b[j]] = [b[j]!, b[i]!];
+  }
+  return b.slice(0, n);
 }
 
 export function trackCard(t: Track): Card {

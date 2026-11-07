@@ -1,15 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { LibraryResponse, Track, TrackPage } from '../../../shared/api.js';
+import type { LibraryResponse, SmartShuffleResponse, Track, TrackPage } from '../../../shared/api.js';
 import { type AppContext, instanceFor } from '../context.js';
 import { AppError } from '../errors.js';
 import { requireUser } from '../http/server.js';
-import { isOffline } from '../spotify/catalog.js';
+import { isOffline, sample } from '../spotify/catalog.js';
 import { ID_RE } from '../spotify/parse.js';
 
 export const IdParam = z.object({ id: z.string().regex(ID_RE) });
 const HiddenParam = z.object({ kind: z.enum(['playlist', 'album', 'artist']), id: z.string().regex(ID_RE) });
 const Q = z.string().trim().min(1).max(200);
+const SmartShuffleBody = z.object({
+  trackIds: z.array(z.string().regex(ID_RE)).min(1).max(500),
+  count: z.number().int().min(1).max(50).default(20),
+});
 const Offset = z.coerce.number().int().min(0).max(10_000).default(0);
 
 /** Spotify's catalogue (through the caller's Spotify instance) and the user's own library lists. */
@@ -79,6 +83,20 @@ export function registerCatalogRoutes(app: FastifyInstance, ctx: AppContext): vo
         .tracks.filter((t) => t.id !== id)
         .sort(() => Math.random() - 0.5)
         .slice(0, 20);
+    }
+  });
+
+  /** Smart Shuffle: recommendations to mix into the shuffled queue (POST: the list of the playing tracks is long). */
+  app.post('/api/smart-shuffle', async (req): Promise<SmartShuffleResponse> => {
+    const a = requireUser(req);
+    const { trackIds, count } = SmartShuffleBody.parse(req.body ?? {});
+    try {
+      return { tracks: await ctx.catalog.smartShuffle(session(a.user.id).s, trackIds, count), offline: false };
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      const skip = new Set(trackIds);
+      const lib = ctx.repo.cachedTracks({ limit: 200, offset: 0 }).tracks.filter((t) => !skip.has(t.id));
+      return { tracks: sample(lib, count), offline: true };
     }
   });
 
