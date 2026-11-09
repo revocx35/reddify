@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AddTracksResponse, MyPlaylist, MyPlaylistResponse } from '../../../shared/api.js';
 import { type AppContext, instanceFor } from '../context.js';
-import { Repo } from '../db/repo.js';
+import { Repo, libraryScope } from '../db/repo.js';
 import { Errors } from '../errors.js';
 import { requireUser } from '../http/server.js';
 import { ID_RE } from '../spotify/parse.js';
@@ -50,13 +50,13 @@ export function registerPlaylistRoutes(app: FastifyInstance, ctx: AppContext): v
     const ids = b.tracks?.length ? await known(a.user.id, b.tracks) : [];
     const id = ctx.repo.createPlaylist(a.user.id, b.name ?? ctx.repo.nextPlaylistName(a.user.id), b.description ?? '');
     if (ids.length) ctx.repo.addToPlaylist(id, ids);
-    return { playlist: own(a.user.id, id), tracks: ctx.repo.playlistTracks(id) };
+    return { playlist: own(a.user.id, id), tracks: ctx.repo.playlistTracks(id, libraryScope(a.user)) };
   });
 
   app.get('/api/playlists/:id', async (req): Promise<MyPlaylistResponse> => {
     const a = requireUser(req);
     const { id } = PlaylistId.parse(req.params);
-    return { playlist: own(a.user.id, id), tracks: ctx.repo.playlistTracks(id) };
+    return { playlist: own(a.user.id, id), tracks: ctx.repo.playlistTracks(id, libraryScope(a.user)) };
   });
 
   app.patch('/api/playlists/:id', async (req): Promise<MyPlaylist> => {

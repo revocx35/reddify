@@ -10,7 +10,9 @@ in a Chrome with Widevine), or either one with the other as fallback.
 - Your own playlists (create, edit, reorder, copy a Spotify playlist), private per user and playable offline.
 - Smart Shuffle: the shuffle button's third setting mixes Spotify recommendations into the shuffled queue (marked ✦).
 - Edit Your Library: remove playlists, albums and artists from Reddify (your Spotify account keeps them; restorable).
-- Multi-user: everyone can have their own Spotify login (own Chromium), or the admin shares one browser.
+- Multi-user: everyone can have their own Spotify login (own Chromium), or the admin shares one browser. The library's
+  files are shared (one copy per song), but each user's library page only lists the songs they fetched themselves —
+  admins see everything.
 - Audio from Spotify's own catalogue (exact, no wrong match) or YouTube Music (fast), per admin setting with fallback.
 - Sign-in with authentik (OIDC) and/or local accounts with 2FA.
 

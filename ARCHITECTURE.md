@@ -71,8 +71,8 @@ seeking correct. Because the recording is real time, the app streams it **chunke
 (`sendJob` with `job.live`, no Content-Length, no ranges): the first play starts a few seconds in and fills up as the
 song plays. `files.source` records which connection produced each file.
 
-Done → the file moves to `library/<xx>/<id>.<ext>`, cover saved, `files` row `ready`, FTS index updated. Every later play
-— any user, any Spotify instance — is a plain file. Failures are remembered for 10 min. Measured on a busy 3-core host:
+Done → the file moves to `library/<xx>/<id>.<ext>`, cover saved, `files` row `ready`, FTS index updated. Every later
+play — any user, any Spotify instance — is a plain file. Failures are remembered for 10 min. Measured on a busy 3-core host:
 match 1.6 s, first byte ~9 s, done ~10 s for YouTube; 3-5 s to the first byte and the song's length for a Spotify
 capture. The player prefetches the next queued track 15 s into the current one, so queues play gap-free (a Spotify-sourced
 next track needs its own song-length of lead time).
@@ -84,8 +84,13 @@ file (metadata is in `tracks`). The Android app additionally keeps downloaded so
 **Multi-user and instances.** Users: local (argon2id) or authentik (OIDC, auto-created; first user or
 `OIDC_ADMIN_GROUP` = admin; display name = authentik username, re-synced at each sign-in). Each user has their own Chromium instance (= their own Spotify login, personal home and
 recommendations) unless the admin sets **shared mode** (`settings.instance_mode = shared`, one instance for all).
-Idle browsers stop after `BROWSER_IDLE_MINUTES`. The library is shared by design (one file per Spotify track id), and so
-is the audio engine: one Spotify account records for everyone, set up once by an admin (Settings → Admin → Spotify audio).
+Idle browsers stop after `BROWSER_IDLE_MINUTES`. The library **files** are shared by design (one file per Spotify track
+id, streamed for everyone), but **the listing is per user**: `library_tracks` (migration 5) records which songs each user
+fetched — queueing/playing a track writes the user's own entry (`Repo.claimLibrary`), and every listing a non-admin sees
+— `GET /api/library/downloads`, the `downloaded` count, the offline library search/home, recommendations and Smart
+Shuffle fallbacks, and the `cached` flag on any track — reads only those entries, so nobody can browse the library to see
+what the other users listen to. Admins see the whole shared library. The audio engine is shared too: one Spotify account
+records for everyone, set up once by an admin (Settings → Admin → Spotify audio).
 Spotify login: the instance owner (or an admin) opens Spotify's login page in a second tab and types it on the live
 screen (noVNC over `/api/vnc`), or pastes an `sp_dc` cookie. The tab closes itself once the `sp_dc` cookie exists.
 
@@ -149,7 +154,9 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
   `CONTROL_SECRET`, which the browsers never see). Containers: read-only rootfs, `cap_drop: ALL`,
   `no-new-privileges`, app as non-root.
 - **Not protected against:** an admin (sees all users, can stop browsers); a Reddify user who can manage the shared
-  instance sees that Spotify account's screen. The library is shared: everyone sees what anyone played.
+  instance sees that Spotify account's screen. The shared files are streamed by track id for anyone signed in (one copy,
+  many listeners), but library **listings** are per user: a non-admin only sees the songs they fetched themselves
+  (`library_tracks`), so the library cannot be browsed to learn what others listen to.
 - **The audio engine** (`capture`) holds one Spotify account for the whole server, set up by an admin only (login over
   VNC, or an `sp_dc` cookie pasted in the admin panel — the cookie is never logged and never leaves the container).
   Its Chrome runs as an unprivileged uid inside a read-only, capability-stripped container with the same seccomp profile
@@ -215,8 +222,8 @@ internet (the site is public), a malicious web page (CSRF), a curious household 
 ## 6. Database (SQLite, `server/src/db/db.ts`)
 
 `users`, `sessions`, `settings` (instance mode, `audio_source`), `ops` (learned queries), `tracks` (metadata), `files` (library:
-ready/failed, path, size, mime, `source` = youtube|spotify, match), `plays`, `likes`, `playlists` + `playlist_tracks` (own playlists,
-migration 2), `library_hidden` (Spotify items removed from Your Library in Reddify only, migration 4), `audit` (180 days),
+ready/failed, path, size, mime, `source` = youtube|spotify, match), `library_tracks` (which songs are in whose library,
+migration 5, backfilled from `plays`), `plays`, `likes`, `playlists` + `playlist_tracks` (own playlists, migration 2), `library_hidden` (Spotify items removed from Your Library in Reddify only, migration 4), `audit` (180 days),
 `tracks_fts` (contentless FTS5 for offline search). Migrations append-only.
 
 ## 7. Deployment

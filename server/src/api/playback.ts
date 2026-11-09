@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { CastResponse, PrepareResponse, Track } from '../../../shared/api.js';
 import { safeEqual } from '../auth/sessions.js';
 import { type AppContext, instanceFor } from '../context.js';
+import { libraryScope } from '../db/repo.js';
 import { Errors } from '../errors.js';
 import { expectedOrigin, requireAdmin, requireUser } from '../http/server.js';
 import { sendFile, sendJob } from '../library/stream.js';
@@ -54,6 +55,8 @@ export function registerPlaybackRoutes(app: FastifyInstance, ctx: AppContext): v
   app.post('/api/tracks/:id/prepare', async (req): Promise<PrepareResponse> => {
     const a = requireUser(req);
     const { id } = IdParam.parse(req.params);
+    // Queueing/opening a track is what puts it in this user's own library listing (the audio file is shared).
+    ctx.repo.claimLibrary(a.user.id, id);
     if (ctx.downloader.readyFile(id)) return { id, status: 'ready' };
     const track = await trackFor(a.user.id, id);
     ctx.downloader.ensure(track);
@@ -69,11 +72,15 @@ export function registerPlaybackRoutes(app: FastifyInstance, ctx: AppContext): v
   app.post('/api/tracks/:id/played', async (req) => {
     const a = requireUser(req);
     const { id } = IdParam.parse(req.params);
-    if (ctx.repo.track(id)) ctx.repo.recordPlay(a.user.id, id);
+    if (ctx.repo.track(id)) {
+      ctx.repo.recordPlay(a.user.id, id);
+      ctx.repo.claimLibrary(a.user.id, id);
+    }
     return { ok: true };
   });
 
   async function stream(req: FastifyRequest, reply: FastifyReply, id: string, userId: number): Promise<FastifyReply> {
+    ctx.repo.claimLibrary(userId, id);
     const ready = ctx.downloader.readyFile(id);
     if (ready) return sendFile(req, reply, ready);
     const track = await trackFor(userId, id);
@@ -129,7 +136,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, ctx: AppContext): v
       url: `${origin}/cast/${castToken(ctx.config.appKey, id, a.user.id)}`,
       contentType,
       cover: track.cover,
-      track: ctx.repo.markCached([track])[0]!,
+      track: ctx.repo.markCached([track], libraryScope(a.user))[0]!,
     };
   });
 

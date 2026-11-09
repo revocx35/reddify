@@ -76,6 +76,18 @@ interface PlaylistRow {
   duration: number;
 }
 
+/**
+ * Which library files a request may see: one user's own `library_tracks` entries, or every file (admins). The audio is
+ * shared on disk (one copy per track for everyone), but the listing is per user: nobody may browse what the others
+ * have.
+ */
+export type LibraryScope = number | 'all';
+
+/** The library scope of a signed-in user: admins see the whole shared library, everyone else only their own songs. */
+export function libraryScope(user: { id: number; role: Role }): LibraryScope {
+  return user.role === 'admin' ? 'all' : user.id;
+}
+
 function rowToTrack(r: TrackRow, cached: boolean): Track {
   let artists: ArtistRef[] = [];
   try {
@@ -271,19 +283,46 @@ export class Repo {
     })();
   }
 
-  track(id: string): Track | undefined {
+  track(id: string, scope: LibraryScope = 'all'): Track | undefined {
     const r = this.db.prepare('SELECT * FROM tracks WHERE id = ?').get(id) as TrackRow | undefined;
     if (!r) return undefined;
-    return rowToTrack(r, this.file(id)?.status === 'ready');
+    const ready = this.file(id)?.status === 'ready' && (scope === 'all' || this.inLibrary(scope, id));
+    return rowToTrack(r, ready);
   }
 
-  /** Marks which of the given tracks already have audio in the library (mutates and returns them). */
-  markCached<T extends Track>(tracks: T[]): T[] {
+  /** Whether the track is in that user's own library (a `library_tracks` entry; the file must still be complete). */
+  private inLibrary(userId: number, trackId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM library_tracks lt JOIN files f ON f.track_id = lt.track_id
+           WHERE lt.user_id = ? AND lt.track_id = ? AND f.status = 'ready'`,
+        )
+        .get(userId, trackId) !== undefined
+    );
+  }
+
+  /** Adds the track to the user's library listing (idempotent): a user's own play is what puts a song in their list. */
+  claimLibrary(userId: number, trackId: string): void {
+    this.db.prepare('INSERT OR IGNORE INTO library_tracks (user_id, track_id, added_at) VALUES (?,?,?)').run(userId, trackId, Date.now());
+  }
+
+  /** Marks which of the given tracks are in the caller's library (mutates and returns them). */
+  markCached<T extends Track>(tracks: T[], scope: LibraryScope = 'all'): T[] {
     if (!tracks.length) return tracks;
     const ids = tracks.map((t) => t.id);
-    const rows = this.db
-      .prepare(`SELECT track_id FROM files WHERE status = 'ready' AND track_id IN (${ids.map(() => '?').join(',')})`)
-      .all(...ids) as { track_id: string }[];
+    const inList = ids.map(() => '?').join(',');
+    const rows =
+      scope === 'all'
+        ? (this.db.prepare(`SELECT track_id FROM files WHERE status = 'ready' AND track_id IN (${inList})`).all(...ids) as {
+            track_id: string;
+          }[])
+        : (this.db
+            .prepare(
+              `SELECT lt.track_id FROM library_tracks lt JOIN files f ON f.track_id = lt.track_id AND f.status = 'ready'
+               WHERE lt.user_id = ? AND lt.track_id IN (${inList})`,
+            )
+            .all(scope, ...ids) as { track_id: string }[]);
     const ready = new Set(rows.map((r) => r.track_id));
     for (const t of tracks) t.cached = ready.has(t.id);
     return tracks;
@@ -347,15 +386,17 @@ export class Repo {
     })();
   }
 
-  storage(): { tracks: number; bytes: number; failed: number; bySource: { youtube: number; spotify: number } } {
+  storage(scope: LibraryScope = 'all'): { tracks: number; bytes: number; failed: number; bySource: { youtube: number; spotify: number } } {
+    const own = scope === 'all' ? '' : ' AND EXISTS (SELECT 1 FROM library_tracks lt WHERE lt.track_id = files.track_id AND lt.user_id = ?)';
+    const args = scope === 'all' ? [] : [scope];
     const r = this.db
       .prepare(
-        "SELECT SUM(status = 'ready') AS tracks, COALESCE(SUM(CASE WHEN status = 'ready' THEN size END), 0) AS bytes, SUM(status = 'failed') AS failed FROM files",
+        `SELECT SUM(status = 'ready') AS tracks, COALESCE(SUM(CASE WHEN status = 'ready' THEN size END), 0) AS bytes, SUM(status = 'failed') AS failed FROM files WHERE 1=1${own}`,
       )
-      .get() as { tracks: number | null; bytes: number; failed: number | null };
+      .get(...args) as { tracks: number | null; bytes: number; failed: number | null };
     const per = this.db
-      .prepare("SELECT source, COUNT(*) AS n FROM files WHERE status = 'ready' GROUP BY source")
-      .all() as { source: string; n: number }[];
+      .prepare(`SELECT source, COUNT(*) AS n FROM files WHERE status = 'ready'${own} GROUP BY source`)
+      .all(...args) as { source: string; n: number }[];
     const bySource = { youtube: 0, spotify: 0 };
     for (const row of per) if (row.source === 'spotify') bySource.spotify = row.n;
     for (const row of per) if (row.source !== 'spotify') bySource.youtube += row.n;
@@ -363,18 +404,26 @@ export class Repo {
   }
 
   /** Library tracks (audio present), newest first, optionally filtered by a full-text query. */
-  cachedTracks(opts: { q?: string; limit: number; offset: number }): { tracks: Track[]; total: number } {
+  cachedTracks(opts: { q?: string; limit: number; offset: number; scope?: LibraryScope }): { tracks: Track[]; total: number } {
+    const scope = opts.scope ?? 'all';
     const fq = opts.q ? ftsQuery(opts.q) : null;
     if (opts.q && !fq) return { tracks: [], total: 0 };
     const where = fq ? 'AND t.rowid IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH @fq)' : '';
+    const from = `FROM files f JOIN tracks t ON t.id = f.track_id${
+      scope === 'all' ? '' : ' JOIN library_tracks lt ON lt.track_id = f.track_id AND lt.user_id = @scope'
+    }`;
+    const params: Record<string, unknown> = { fq, limit: opts.limit, offset: opts.offset };
+    if (scope !== 'all') params.scope = scope;
     const rows = this.db
       .prepare(
-        `SELECT t.* FROM files f JOIN tracks t ON t.id = f.track_id WHERE f.status = 'ready' ${where}
+        `SELECT t.* ${from} WHERE f.status = 'ready' ${where}
          ORDER BY COALESCE(f.last_played, f.created_at) DESC LIMIT @limit OFFSET @offset`,
       )
-      .all({ fq, limit: opts.limit, offset: opts.offset }) as TrackRow[];
+      .all(params) as TrackRow[];
+    const countParams: Record<string, unknown> = { fq };
+    if (scope !== 'all') countParams.scope = scope;
     const total = (
-      this.db.prepare(`SELECT COUNT(*) AS n FROM files f JOIN tracks t ON t.id = f.track_id WHERE f.status = 'ready' ${where}`).get({ fq }) as {
+      this.db.prepare(`SELECT COUNT(*) AS n ${from} WHERE f.status = 'ready' ${where}`).get(countParams) as {
         n: number;
       }
     ).n;
@@ -397,14 +446,14 @@ export class Repo {
     })();
   }
 
-  recentTracks(userId: number, limit: number): Track[] {
+  recentTracks(userId: number, limit: number, scope: LibraryScope = 'all'): Track[] {
     const rows = this.db
       .prepare(
         `SELECT t.*, MAX(p.played_at) AS lp FROM plays p JOIN tracks t ON t.id = p.track_id WHERE p.user_id = ?
          GROUP BY t.id ORDER BY lp DESC LIMIT ?`,
       )
       .all(userId, limit) as TrackRow[];
-    return this.markCached(rows.map((r) => rowToTrack(r, false)));
+    return this.markCached(rows.map((r) => rowToTrack(r, false)), scope);
   }
 
   like(userId: number, trackId: string, on: boolean): void {
@@ -418,11 +467,11 @@ export class Repo {
     );
   }
 
-  likedTracks(userId: number): Track[] {
+  likedTracks(userId: number, scope: LibraryScope = 'all'): Track[] {
     const rows = this.db
       .prepare('SELECT t.* FROM likes l JOIN tracks t ON t.id = l.track_id WHERE l.user_id = ? ORDER BY l.created_at DESC')
       .all(userId) as TrackRow[];
-    return this.markCached(rows.map((r) => rowToTrack(r, false)));
+    return this.markCached(rows.map((r) => rowToTrack(r, false)), scope);
   }
 
   /* ---------------------------------------------------- hidden library items */
@@ -520,11 +569,11 @@ export class Repo {
     this.db.prepare('DELETE FROM playlists WHERE id = ?').run(id);
   }
 
-  playlistTracks(id: number): Track[] {
+  playlistTracks(id: number, scope: LibraryScope = 'all'): Track[] {
     const rows = this.db
       .prepare('SELECT t.* FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id WHERE pt.playlist_id = ? ORDER BY pt.pos')
       .all(id) as TrackRow[];
-    return this.markCached(rows.map((r) => rowToTrack(r, false)));
+    return this.markCached(rows.map((r) => rowToTrack(r, false)), scope);
   }
 
   /** Appends tracks (known to the `tracks` table) that are not in the playlist yet; returns how many were added. */

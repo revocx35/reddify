@@ -62,6 +62,11 @@ in this repo.
 
 ## Gotchas
 
+- The library's files are shared, its listings are not: `library_tracks` (migration 5) holds each user's own songs
+  (`Repo.claimLibrary` on play/queue, backfilled from `plays`), and every read passes a scope from `libraryScope(user)`
+  (`'all'` for admins, the user id otherwise) to `cachedTracks`, `storage`, `markCached`, `recentTracks`, `likedTracks`
+  and `playlistTracks` — a new listing without it shows a non-admin what the other users listen to. Streaming
+  (`/api/stream/:id`) stays shared for any known track id.
 - Home track cards have no duration: the server fetches `getTrack` before matching audio.
 - `GrowingFileReader` must serialise reads (concurrent `_read` duplicated bytes once).
 - yt-dlp reports `ext size` before it solves the JS challenge; the first audio bytes arrive ~4 s later.

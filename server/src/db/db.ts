@@ -125,6 +125,22 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (user_id, kind, item_id)
   ) WITHOUT ROWID;
   `,
+  // 5: which songs are in which user's library. The audio files are shared (one file per track for everyone), but the
+  // library *listing* is per user: a user only sees the songs they fetched here, so nobody can browse the library to see
+  // what the others listen to (admins see everything). A play/queue of a track adds it to that user's own list, whether
+  // the file was downloaded then or already existed. Legacy rows are backfilled from the plays that already exist.
+  `
+  CREATE TABLE library_tracks (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    track_id TEXT NOT NULL,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, track_id)
+  ) WITHOUT ROWID;
+  CREATE INDEX library_tracks_track ON library_tracks(track_id);
+  INSERT OR IGNORE INTO library_tracks (user_id, track_id, added_at)
+    SELECT p.user_id, p.track_id, p.played_at FROM plays p
+    WHERE EXISTS (SELECT 1 FROM files f WHERE f.track_id = p.track_id AND f.status = 'ready');
+  `,
 ];
 
 export function openDb(dataDir: string): DB {

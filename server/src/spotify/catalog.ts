@@ -9,7 +9,7 @@ import type {
   Track,
   TrackPage,
 } from '../../../shared/api.js';
-import type { Repo } from '../db/repo.js';
+import type { LibraryScope, Repo } from '../db/repo.js';
 import { AppError, Errors } from '../errors.js';
 import {
   parseAlbum,
@@ -67,14 +67,15 @@ export class Catalog {
     private readonly timeZone: string,
   ) {}
 
-  private remember<T extends Track>(tracks: T[]): T[] {
+  /** Caches metadata in the DB and marks which of the tracks are in the viewer's own library (`scope`). */
+  private remember<T extends Track>(tracks: T[], scope: LibraryScope = 'all'): T[] {
     this.repo.upsertTracks(tracks.filter((t) => t.durationMs > 0 || !this.repo.track(t.id)));
-    return this.repo.markCached(tracks);
+    return this.repo.markCached(tracks, scope);
   }
 
-  private rememberCards(cards: Card[]): Card[] {
+  private rememberCards(cards: Card[], scope: LibraryScope = 'all'): Card[] {
     const ts = cards.flatMap((c) => (c.track ? [c.track] : []));
-    this.remember(ts);
+    this.remember(ts, scope);
     return cards;
   }
 
@@ -88,116 +89,116 @@ export class Catalog {
 
   /* ------------------------------------------------------------------------ home */
 
-  async home(s: Querier, instance: number, userId: number): Promise<HomeResponse> {
+  async home(s: Querier, instance: number, userId: number, scope: LibraryScope = 'all'): Promise<HomeResponse> {
     try {
       const h = await this.cached(`home:${instance}`, async () =>
         parseHome(await s.query('home', { timeZone: this.timeZone, sectionItemsLimit: 12 })),
       );
-      for (const sec of h.sections) this.rememberCards(sec.items);
-      const recent = this.repo.recentTracks(userId, 12);
+      for (const sec of h.sections) this.rememberCards(sec.items, scope);
+      const recent = this.repo.recentTracks(userId, 12, scope);
       const sections: Section[] = recent.length ? [{ title: 'Recently played', items: recent.map(trackCard) }, ...h.sections] : h.sections;
       return { greeting: h.greeting, sections, offline: false };
     } catch (e) {
       if (!isOffline(e)) throw e;
-      return this.offlineHome(userId);
+      return this.offlineHome(userId, scope);
     }
   }
 
-  offlineHome(userId: number): HomeResponse {
+  offlineHome(userId: number, scope: LibraryScope = 'all'): HomeResponse {
     const sections: Section[] = [];
-    const recent = this.repo.recentTracks(userId, 20).filter((t) => t.cached);
+    const recent = this.repo.recentTracks(userId, 20, scope).filter((t) => t.cached);
     if (recent.length) sections.push({ title: 'Recently played', items: recent.map(trackCard) });
-    const liked = this.repo.likedTracks(userId).filter((t) => t.cached);
+    const liked = this.repo.likedTracks(userId, scope).filter((t) => t.cached);
     if (liked.length) sections.push({ title: 'Liked songs', items: liked.slice(0, 20).map(trackCard) });
-    const lib = this.repo.cachedTracks({ limit: 30, offset: 0 }).tracks;
+    const lib = this.repo.cachedTracks({ limit: 30, offset: 0, scope }).tracks;
     if (lib.length) sections.push({ title: 'In your library', items: lib.map(trackCard) });
     return { greeting: 'Offline: playing from the library', sections, offline: true };
   }
 
   /* ---------------------------------------------------------------------- search */
 
-  async search(s: Querier, instance: number, q: string): Promise<SearchResponse> {
+  async search(s: Querier, instance: number, q: string, scope: LibraryScope = 'all'): Promise<SearchResponse> {
     try {
       const r = await this.cached(`search:${instance}:${q.toLowerCase()}`, async () =>
         parseSearch(await s.query('searchDesktop', { searchTerm: q, offset: 0, limit: 10, numberOfTopResults: 5 }), q),
       );
-      this.remember(r.tracks);
-      if (r.top) this.rememberCards([r.top]);
+      this.remember(r.tracks, scope);
+      if (r.top) this.rememberCards([r.top], scope);
       return { ...r, offline: false };
     } catch (e) {
       if (!isOffline(e)) throw e;
-      return this.offlineSearch(q);
+      return this.offlineSearch(q, scope);
     }
   }
 
-  offlineSearch(q: string): SearchResponse {
-    const { tracks } = this.repo.cachedTracks({ q, limit: 50, offset: 0 });
+  offlineSearch(q: string, scope: LibraryScope = 'all'): SearchResponse {
+    const { tracks } = this.repo.cachedTracks({ q, limit: 50, offset: 0, scope });
     return { query: q, top: null, tracks, artists: [], albums: [], playlists: [], offline: true };
   }
 
-  async searchTracks(s: Querier, instance: number, q: string, offset: number): Promise<TrackPage> {
+  async searchTracks(s: Querier, instance: number, q: string, offset: number, scope: LibraryScope = 'all'): Promise<TrackPage> {
     try {
       const r = await this.cached(`stracks:${instance}:${q.toLowerCase()}:${offset}`, async () =>
         parseSearchTracks(await s.query('searchTracks', { searchTerm: q, offset, limit: 50, numberOfTopResults: 20 }), offset),
       );
-      this.remember(r.tracks);
+      this.remember(r.tracks, scope);
       return r;
     } catch (e) {
       if (!isOffline(e)) throw e;
-      const { tracks, total } = this.repo.cachedTracks({ q, limit: 50, offset });
+      const { tracks, total } = this.repo.cachedTracks({ q, limit: 50, offset, scope });
       return { tracks, total, offset };
     }
   }
 
   /* ----------------------------------------------------------------------- pages */
 
-  async album(s: Querier, id: string): Promise<AlbumResponse> {
+  async album(s: Querier, id: string, scope: LibraryScope = 'all'): Promise<AlbumResponse> {
     const r = await this.cached(`album:${id}`, async () => {
       const a = parseAlbum(await s.query('getAlbum', { uri: `spotify:album:${id}`, offset: 0, limit: 300 }));
       if (!a) throw Errors.notFound('Album not found.');
       return a;
     });
-    this.remember(r.tracks);
+    this.remember(r.tracks, scope);
     return r;
   }
 
-  async artist(s: Querier, id: string): Promise<ArtistResponse> {
+  async artist(s: Querier, id: string, scope: LibraryScope = 'all'): Promise<ArtistResponse> {
     const r = await this.cached(`artist:${id}`, async () => {
       const a = parseArtist(await s.query('queryArtistOverview', { uri: `spotify:artist:${id}` }));
       if (!a) throw Errors.notFound('Artist not found.');
       return a;
     });
-    this.remember(r.topTracks);
+    this.remember(r.topTracks, scope);
     return r;
   }
 
-  async playlist(s: Querier, instance: number, id: string, offset: number): Promise<PlaylistResponse> {
+  async playlist(s: Querier, instance: number, id: string, offset: number, scope: LibraryScope = 'all'): Promise<PlaylistResponse> {
     // Playlists can be personal ("Discover Weekly"): cache per instance.
     const r = await this.cached(`playlist:${instance}:${id}:${offset}`, async () => {
       const p = parsePlaylist(await s.query('fetchPlaylist', { uri: `spotify:playlist:${id}`, offset, limit: 100 }), offset);
       if (!p) throw Errors.notFound('Playlist not found.');
       return p;
     });
-    this.remember(r.tracks);
+    this.remember(r.tracks, scope);
     return r;
   }
 
   /** Full metadata of one track (cached in the DB; asks Spotify only when unknown or without a duration). */
-  async track(s: Querier | null, id: string): Promise<Track> {
-    const known = this.repo.track(id);
+  async track(s: Querier | null, id: string, scope: LibraryScope = 'all'): Promise<Track> {
+    const known = this.repo.track(id, scope);
     if (known && known.durationMs > 0) return known;
     if (!s) throw Errors.unavailable('Spotify is not available to look this track up.');
     const t = parseTrackUnion(await s.query('getTrack', { uri: `spotify:track:${id}` }));
     if (!t) throw Errors.notFound('Track not found.');
     this.repo.upsertTracks([t]);
-    return this.repo.track(id)!;
+    return this.repo.track(id, scope)!;
   }
 
-  async recommendations(s: Querier, id: string): Promise<Track[]> {
+  async recommendations(s: Querier, id: string, scope: LibraryScope = 'all'): Promise<Track[]> {
     const r = await this.cached(`rec:${id}`, async () =>
       parseRecommendations(await s.query('internalLinkRecommenderTrack', { uri: `spotify:track:${id}`, limit: 20 })),
     );
-    return this.remember(r);
+    return this.remember(r, scope);
   }
 
   /**
@@ -207,10 +208,10 @@ export class Catalog {
    * the catalogue browser never plays, so the same per-track recommender autoplay uses is the source.
    * Throws "unavailable" only when every seed failed that way (the route then falls back to the library).
    */
-  async smartShuffle(s: Querier, trackIds: string[], count: number, maxSeeds = 5): Promise<Track[]> {
+  async smartShuffle(s: Querier, trackIds: string[], count: number, scope: LibraryScope = 'all', maxSeeds = 5): Promise<Track[]> {
     const exclude = new Set(trackIds);
     const seeds = sample([...exclude], maxSeeds);
-    const results = await Promise.allSettled(seeds.map((id) => this.recommendations(s, id)));
+    const results = await Promise.allSettled(seeds.map((id) => this.recommendations(s, id, scope)));
     const lists = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
     if (!lists.length) {
       const err = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')?.reason;
@@ -234,11 +235,11 @@ export class Catalog {
     return this.cached(`library:${instance}`, async () => parseLibrary(await s.query('libraryV3', {})));
   }
 
-  async spotifyLiked(s: Querier, instance: number, offset: number): Promise<TrackPage> {
+  async spotifyLiked(s: Querier, instance: number, offset: number, scope: LibraryScope = 'all'): Promise<TrackPage> {
     const r = await this.cached(`liked:${instance}:${offset}`, async () =>
       parseLibraryTracks(await s.query('fetchLibraryTracks', { offset, limit: 50 }), offset),
     );
-    this.remember(r.tracks);
+    this.remember(r.tracks, scope);
     return r;
   }
 }
